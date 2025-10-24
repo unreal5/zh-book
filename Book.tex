@@ -1,0 +1,69 @@
+\documentclass[10.5pt,a4paper]{ZBook}
+
+\usepackage{menukeys}
+\usepackage[normalem]{ulem}
+\usepackage{indentfirst}
+\setlength{\parskip}{.5ex}
+\begin{document}
+%\frontmatter
+%\chapter*{前言}
+%下一步定制section和目录。
+%\tableofcontents
+\mainmatter
+
+\chapter{过程性动画}
+Control rig 使用\cppsign{}实现步骤：
+\section{球形追踪}
+在程序化动画中，角色的脚部会直接移动到其原始动画位置，这会导致脚部穿过地板或其他障碍物，看起来不真实。
+
+\subsection{解决方案：使用球体追踪（Sphere Trace）}
+为了解决脚部穿透问题，可以使用\textbf{球体追踪}的方法来动态调整脚部的位置，使其能够正确地与地面或障碍物进行交互。
+
+\subsubsection{实现步骤}
+\begin{myenum}
+    \item \textbf{创建球体追踪节点}：在动画蓝图中，使用“Sphere Trace by Channel”节点。这个节点会从一个起始点向一个结束点发射一个带半径的球体，检测路径上是否与其他物体发生碰撞。
+
+    \item \textbf{设置追踪的起点和终点}：
+    \begin{itemize}
+        \item \textbf{终点 (End Point)}：设置为脚部IK的原始目标位置（即动画中脚应该在的位置）。
+        \item \textbf{起点 (Start Point)}：在终点位置的基础上，增加Z轴的高度（例如50个单位），这样追踪射线就是从脚的上方垂直向下发射。
+    \end{itemize}
+
+    \item \textbf{处理追踪结果}：
+    \begin{itemize}
+        \item 球体追踪会返回一个布尔值（是否击中）和一个“击中位置”（\ci{Hit Location}）。
+        \item 如果追踪击中了物体（如地面），则将脚的IK目标位置设置为这个“击中位置”。
+    \end{itemize}
+\end{myenum}
+
+\subsection{遇到的问题与优化}
+\begin{enumerate}
+    \item \textbf{问题一：脚在空中时位置错误}
+    \begin{itemize}
+        \item \textbf{现象}：当角色跳起，脚在空中时，球体追踪没有击中任何物体。此时，“击中位置”会返回一个零向量(0,0,0)，导致双脚在空中时瞬间吸附到世界坐标原点。
+        \item \textbf{解决方案}：使用一个\textbf{IF条件判断节点}。
+        \begin{itemize}
+            \item 如果球体追踪的返回值为\textbf{True}（击中物体），则使用“击中位置”作为脚的IK目标。
+            \item 如果返回值为\textbf{False}（未击中），则继续使用原始的动画目标位置。
+        \end{itemize}
+    \end{itemize}
+
+    \item \textbf{问题二：脚部陷入地面}
+    \begin{itemize}
+        \item \textbf{现象}：即使追踪击中了地面，脚看起来仍然部分陷入地面。这是因为骨骼的轴心点（Pivot）在脚踝，而不是在脚底。将脚踝位置设置为地面高度，自然会导致脚掌部分在地面以下。
+        \item \textbf{解决方案}：在“击中位置”的基础上，给Z轴增加一个固定的偏移量（例如15个单位），然后再将其设置为IK目标。这个偏移量相当于从脚踝到脚底的高度，从而将脚正确地抬高到地面上。
+    \end{itemize}
+
+    \item \textbf{问题三：状态切换时的抖动}
+    \begin{itemize}
+        \item \textbf{现象}：当脚从空中接触地面时，由于Z轴偏移只在“击中”状态下应用，可能会产生一个微小的“吸附”或“抖动”效果。
+        \item \textbf{解决方案}：将Z轴的高度偏移应用到\textbf{所有情况}下（无论是否击中物体）。这样可以确保脚部在空中和在地面的高度基准一致，消除状态切换时的不连贯。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{测试与结论}
+视频中通过在场景中添加一个立方体并设置其碰撞属性，来测试脚部IK是否能正确地踩在新的障碍物上。实验证明该方法有效，可以实现单脚或双脚与不同高度的物体进行正确的交互。
+
+然而，对于视频作者后续的纯程序化动画（不依赖传统动画文件）目标而言，这个基于追踪的IK修正系统并非必需。因此，在演示了其原理和实现方法后，作者最终删除了这部分逻辑，恢复到更简单的IK设置。
+
+\end{document}

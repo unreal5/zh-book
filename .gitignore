@@ -1,0 +1,15 @@
+/_minted
+/*.aux
+/*.code
+/*.dfn
+/*.ex
+/*.fdb_latexmk
+/*.fls
+/*.log
+/*.out
+/*.synctex.gz
+/*.tec
+/*.toc
+/*.thm
+/*.xdv
+/*.pdf

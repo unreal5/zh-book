@@ -1,0 +1,325 @@
+\documentclass[math,code,12pt]{amznotes}
+\xeCJKsetup{CJKmath=true}
+%\usepackage{minted}
+\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none}
+\newcommand{\il}[1]{\mintinline{c++}{#1}}%
+
+\newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
+ arc=2pt,outer arc=2pt,colback=red!10!white,colframe=#1!50!black,
+ boxsep=0pt,left=2pt,right=2pt,top=2pt,bottom=2pt,
+ boxrule=0pt,bottomrule=0pt,toprule=0pt}
+
+%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{fontawesome5}
+%\hspace*{\fill} #1 \hspace*{\fill}\faRemove\\文件(F)\quad 动作(A)\quad 编辑(E)\quad 查看(V)\quad 帮助(H)\hspace*{\fill}
+\newtcolorbox{console}{colback=black,
+    colupper=white,
+    fontupper=\small\ttfamily\bfseries,
+    fonttitle=\small\sffamily,
+    colback=amzcodeboxcolor,
+    frame style={opacity=0.25},
+    colframe=amzcodeboxcolor,
+    center title,
+    left = 2pt,
+    width=\linewidth,
+    listing only,
+    drop shadow,
+    right = 2pt,
+    top = 1mm,
+    boxsep =1pt,
+    arc=2pt,
+    title ={\faTerminal\hspace*{\fill}控制台\ \faBatteryThreeQuarters},
+    %listing options={style=tcblatex,language=sh},
+    } 
+\begin{document}
+		%\frontmatter
+    %\tableofcontents
+
+		\mainmatter\setchapterimage{./images/background}
+		\chapter{世界空间 vs Rig空间}
+		Rig空间和世界空间之间相互转换可以使用\il{FromWorld}和\il{ToWorld}。\dfntxt{Rig空间}在control rig中也称\dfntxt{Global Space}，这种说法容易让人混淆，要注意。牢记：$Rig Space \iff Global Space$。		\dfntxt{Rig空间}是相对角色的骨架的坐标。
+		
+		在control rig蓝图中可以使用对应的结点，但对于c++，可以使用\il{ExecuteContext}的成员函数：
+		\begin{amzcode}{c++}
+		FTransform GlobalTM = ExecuteContext.Hierarchy->GetGlobalTransform(BoneKey);
+		FTransform WorldTM = ExecuteContext.ToWorldSpace(GlobalTM);
+		\end{amzcode}
+		
+		动画每帧都会调用\mybox{Forwards Solve}结点，但我们只想调用一次，并且在所有的事件发生前调用，此时可以使用\mybox{Construction Event}。
+		
+		对于需要启动control rig控制台绘制的，需要打开以下控制台命令。
+		\begin{console}
+		a.AnimNode.ControlRig.Debug 1
+		
+		ControlRig.EnableDrawInterfaceInGame 1
+		\end{console}
+		\section{Fullbody IK}
+		\mybox{Full Body IK} 节点它能让我们为角色的某条肢体指定一个要去对齐的目标点，然后它会尝试求解\dfntxt{整个身体}(\emph{fullbody})，以到达那个目标点。
+		
+		\begin{tcolorbox}[breakable,enhanced,bicolor,sidebyside,lefthand width=.45\linewidth,
+		 sharp corners,boxrule=.4pt,colback=green!5,colbacklower=green!50!black!50,nobeforeafter]
+		 \begin{enumerate}
+		 \item Root:通常设置为FullBodyIK解算时\emph{最顶层}（top-most）的骨骼，Root之上的骨骼链通常忽略，不参与解算。
+		 \item Effectors:设置移动的末端骨骼的数组。对于蝎子示例，有6个末端骨骼，添加6个数组成员。
+		 \end{enumerate}
+		 \tcblower
+		 \includegraphics[width=\linewidth]{./images/fullBodyIK}
+		 \end{tcolorbox}
+		 \subsection{FTransform}
+		 \begin{enumerate}
+		 \item 由缩放（Scale）、旋转（以四元数表示）和位移（Translation）组成的变换。
+		 \item  变换可用于在不同空间之间进行转换，例如将位置和方向从局部空间转换到世界空间。
+		 \item  对位置向量的变换按顺序应用：Scale -> Rotate -> Translate。
+		 \item  对方向向量的变换按顺序应用：Scale -> Rotate。
+		 \item  在复合变换时，顺序很重要：$C = A \times B$ 得到的变换 C，在对后续对象进行变换时，逻辑上等价于先应用 A，再应用 B。注意，这与四元数（\il{TQuat<T>}）相乘的顺序相反。
+		 \item  示例：\il{LocalToWorld = (DeltaRotation * LocalToWorld)} 将在局部空间中按 DeltaRotation 改变旋转。
+		 \item  示例：\il{LocalToWorld = (LocalToWorld * DeltaRotation)} 将在世界空间中按 DeltaRotation 改变旋转。
+		 \end{enumerate}
+\begin{genbox}{Transform的乘法计算}
+在 UE 的 TTransform 中，$C = A * B$ 表示：随后对点调用 \il{C.TransformPosition(P)} 时，等价于 \il{B.TransformPosition(A.TransformPosition(P))}，即先应用 $A$，再应用 $B$（注意：四元数相乘顺序与“应用顺序”相反）。
+
+骨骼层级中，Local 是子相对父的局部变换（Child→Parent），ParentWorld 是父到世界（Parent→World）。要得到子到世界（Child→World），应先 Local 再 ParentWorld，因此 $ChildWorld = Local * ParentWorld$。
+
+为何非交换：由于旋转和平移的耦合，$A * B$ 通常不等于 $B * A$，顺序改变会得到不同的结果。
+\end{genbox}		 
+
+
+\subsection*{核心目标}
+为了计算速度，需要先得到角色自上一帧以来在世界空间（World Space）的位移。为此：
+\begin{itemize}
+\item 记录上一帧的世界变换（PreviousWorldTransform）。
+\item 在当前帧计算出从上一帧到当前帧的世界空间差值（WorldDelta）。
+\item 将上一帧的世界变换在每次函数调用末尾更新为当前值，确保下一帧对比的是“真正的上一帧”。
+\end{itemize}
+
+\subsection*{变量与类型}
+\begin{itemize}
+\item \textbf{PreviousWorldTransform}（类型：Transform）
+\begin{itemize}
+\item 初名 \texttt{PreviousWorldLocation}，后改为 \texttt{PreviousWorldTransform}，因为 Transform 还包含旋转与缩放（虽然当前不使用，但命名更准确）。
+\item 通过 \texttt{Compile} 与 \texttt{Save} 生效。
+\end{itemize}
+\item \textbf{WorldDelta}（类型：Transform）
+\begin{itemize}
+\item 表示自上次更新以来的世界空间差值（位移／相对变换）。当前主要关注平移分量，但其本质为完整 Transform。
+\end{itemize}
+\end{itemize}
+
+\subsection*{保存上一帧世界变换（每帧末尾执行）}
+\begin{enumerate}
+\item 在 \il{CalculateVelocity} 函数中，每次调用（每帧）都需要更新 \textbf{PreviousWorldTransform} 为当前的世界变换。
+\item 获取当前 Rig 的世界变换：
+\begin{itemize}
+\item 取 Rig Space 原点（中心，坐标(0,0,0)）的 Transform。
+\item 使用 \il{To World} 节点将其从 Rig Space 转换到 World Space。
+\item 说明：\il{To World} 在未显式输入 Transform 时，默认使用零平移、零旋转（缩放无关），即“无偏移”的 Rig Transform，再将其转换到世界空间。这等价于查询“Rig 在世界中的位置”（其中心点在关卡中的位置）。
+\end{itemize}
+\item 将转换得到的当前世界变换通过 \il{Set PreviousWorldTransform} 写入变量，但要把这一写入放在图（逻辑）靠右、即\emph{本帧所有计算完成之后}，避免本帧计算误用“刚更新的当前值”，而应使用“真正的上一帧值”。
+\end{enumerate}
+
+\subsection*{计算与上一帧的差值（WorldDelta）}
+因为Transform没有直接支持“\dfntxt{减法}”运算，所以使用了$C=A*B.Inverse()$，相当于做减法。
+\begin{enumerate}
+\item 再次获取当前帧的世界变换（同上：\il{To World}，无输入即默认从 Rig 原点出发）。
+\item 取 \textbf{PreviousWorldTransform} 的 \il{Inverse}（求逆）。
+\item 使用 Transform 乘法 \il{Multiply (Transform)} 计算差值：
+\begin{itemize}
+\item 重要：Transform 乘法是\textbf{非交换}的（non-commutative），顺序必须严格为：
+\[
+\text{CurrentWorld} \times \text{Inverse}(\text{PreviousWorld})
+\]
+\item 其中 \textbf{CurrentWorld} 由 “Rig 原点 (\rightarrow) \il{To World}” 得到；\textbf{PreviousWorld} 即上一帧保存的世界变换。
+\end{itemize}
+\item 在更新 \textbf{PreviousWorldTransform} 之前，先将上述乘法结果保存到新变量 \textbf{WorldDelta}（通过 \il{Set WorldDelta}）。
+\item \il{Compile} 与 \il{Save} 确认更改。
+\end{enumerate}
+
+\subsection*{公式化表达}
+令
+$T_{\text{rig},0} \text{ 为 Rig 空间的零偏移变换（原点）},\\
+W_{\text{curr}} = \texttt{ToWorld}(T_{\text{rig},0}),\\\
+W_{\text{prev}} = \text{PreviousWorldTransform}.
+$\\
+则本帧与上一帧的世界空间相对变换（差值）为$\text{WorldDelta} = W_{\text{curr}} \times W_{\text{prev}}^{-1}$.
+当前关注其平移长度可作为“位移量”，在结合时间后可用于速度计算。
+
+\subsection*{关键注意事项与节点}
+\begin{itemize}
+\item \textbf{顺序敏感}：Transform 乘法非交换，必须用“当前 (\times) 上一帧的逆”。
+\item \textbf{更新时机}：\textbf{PreviousWorldTransform} 的更新放在\emph{本帧计算之后}，确保用于对比的是“真正的上一帧值”。
+\item \textbf{空间概念}：Rig Space 的原点经过 \il{To World} 得到 Rig 在关卡（World Space）中的位置。
+\item \textbf{默认输入}：\il{To World} 无输入时采用零变换（平移与旋转为零，缩放无关），表示“无偏移”的 Rig Transform。
+\item \textbf{使用的节点/操作}：
+\begin{itemize}
+\item \il{To World}（Rig (\rightarrow) World 转换）
+\item \il{Inverse}（求逆变换）
+\item \il{Multiply (Transform)}（变换乘法）
+\item \il{Set PreviousWorldTransform}，\il{Set WorldDelta}
+\end{itemize}
+\end{itemize}
+
+\subsection*{阶段性结果与后续}
+\begin{itemize}
+\item 已完成：每帧保存上一帧的世界变换，并计算 \textbf{WorldDelta}，用于表示“自上次更新以来的世界空间差值”。
+\item 下一步（预告）：将在后续章节测试并验证该差值是否正确反映角色在世界中的位移。
+\end{itemize}
+
+
+
+		\setchapterimage{./images/j20}
+		%\setchapterimage{}
+    \chapter{过程性动画}
+    Control rig 使用c++实现步骤：
+    \section{球形追踪}
+    在程序化动画中，角色的脚部会直接移动到其原始动画位置，这会导致脚部穿过地板或其他障碍物，看起来不真实。
+    
+    \subsection{解决方案：使用球体追踪（Sphere Trace）}
+    为了解决脚部穿透问题，可以使用\textbf{球体追踪}的方法来动态调整脚部的位置，使其能够正确地与地面或障碍物进行交互。
+    
+    \begin{tecbox}{实现步骤}{tec1}
+    \begin{enumerate}
+        \item \textbf{创建球体追踪节点}：在动画蓝图中，使用“Sphere Trace by Channel”节点。这个节点会从一个起始点向一个结束点发射一个带半径的球体，检测路径上是否与其他物体发生碰撞。
+    
+        \item \textbf{设置追踪的起点和终点}：
+        \begin{itemize}
+            \item \textbf{终点 (End Point)}：设置为脚部IK的原始目标位置（即动画中脚应该在的位置）。
+            \item \textbf{起点 (Start Point)}：在终点位置的基础上，增加Z轴的高度（例如50个单位），这样追踪射线就是从脚的上方垂直向下发射。
+        \end{itemize}
+    
+        \item \textbf{处理追踪结果}：
+        \begin{itemize}
+            \item 球体追踪会返回一个布尔值（是否击中）和一个“击中位置”（\il{Hit Location}）。
+            \item 如果追踪击中了物体（如地面），则将脚的IK目标位置设置为这个“击中位置”。
+        \end{itemize}
+    \end{enumerate}
+    \end{tecbox}
+    \begin{genbox}{遇到的问题与优化}
+    \begin{enumerate}
+        \item \textbf{问题一：脚在空中时位置错误}
+        \begin{itemize}
+            \item \textbf{现象}：当角色跳起，脚在空中时，球体追踪没有击中任何物体。此时，“击中位置”会返回一个零向量(0,0,0)，导致双脚在空中时瞬间吸附到世界坐标原点。
+            \item \textbf{解决方案}：使用一个\textbf{IF条件判断节点}。
+            \begin{itemize}
+                \item 如果球体追踪的返回值为\textbf{True}（击中物体），则使用“击中位置”作为脚的IK目标。
+                \item 如果返回值为\textbf{False}（未击中），则继续使用原始的动画目标位置。
+            \end{itemize}
+        \end{itemize}
+    
+        \item \textbf{问题二：脚部陷入地面}
+        \begin{itemize}
+            \item \textbf{现象}：即使追踪击中了地面，脚看起来仍然部分陷入地面。这是因为骨骼的轴心点（Pivot）在脚踝，而不是在脚底。将脚踝位置设置为地面高度，自然会导致脚掌部分在地面以下。
+            \item \textbf{解决方案}：在“击中位置”的基础上，给Z轴增加一个固定的偏移量（例如15个单位），然后再将其设置为IK目标。这个偏移量相当于从脚踝到脚底的高度，从而将脚正确地抬高到地面上。
+        \end{itemize}
+    
+        \item \textbf{问题三：状态切换时的抖动}
+        \begin{itemize}
+            \item \textbf{现象}：当脚从空中接触地面时，由于Z轴偏移只在“击中”状态下应用，可能会产生一个微小的“吸附”或“抖动”效果。
+            \item \textbf{解决方案}：将Z轴的高度偏移应用到\textbf{所有情况}下（无论是否击中物体）。这样可以确保脚部在空中和在地面的高度基准一致，消除状态切换时的不连贯。
+        \end{itemize}
+    \end{enumerate}
+    \end{genbox}
+    \subsection{测试与结论}
+    视频中通过在场景中添加一个立方体并设置其碰撞属性，来测试脚部IK是否能正确地踩在新的障碍物上。实验证明该方法有效，可以实现单脚或双脚与不同高度的物体进行正确的交互。
+    
+    然而，对于视频作者后续的纯程序化动画（不依赖传统动画文件）目标而言，这个基于追踪的IK修正系统并非必需。因此，在演示了其原理和实现方法后，作者最终删除了这部分逻辑，恢复到更简单的IK设置。
+\begin{codebox}{MakeBasicIKParams}{MakeBasicIKParams}
+	\begin{amzcode}{c++}
+USTRUCT(meta = (DisplayName = "MakeBasicIKParams"))
+struct PROCEDURALANIMCOURSE_API FRigUnit_MakeBasicIKParams : public FRigUnit_DynamicHierarchyBase
+{
+	GENERATED_BODY()
+	FRigUnit_MakeBasicIKParams(){}
+	
+	RIGVM_METHOD()
+	void Execute() override;
+
+	UPROPERTY(meta = (Input))
+	FRigElementKey FootKey;
+
+	UPROPERTY(meta = (Output))
+	FRigElementKey ItemA;
+
+	UPROPERTY(meta = (Output))
+	FRigElementKey ItemB;
+
+	UPROPERTY(meta = (Output))
+	FVector PrimaryAxis;
+
+	UPROPERTY(meta = (Output))
+	FVector SecondaryAxis;
+};	
+  \end{amzcode}
+\end{codebox}
+
+\begin{codebox}{实现}{MakeBasicIKParamscpp}
+	\begin{amzcode}{c++}
+void FRigUnit_MakeBasicIKParams::StaticExecute(const FControlRigExecuteContext& ExecuteContext,
+                                               const FRigElementKey& FootKey,
+                                               FRigElementKey& ItemA,
+                                               FRigElementKey& ItemB,
+                                               FVector& PrimaryAxis,
+                                               FVector& SecondaryAxis)
+{
+	if (ExecuteContext.Hierarchy == nullptr) return;
+
+	ItemB = ExecuteContext.Hierarchy->GetDefaultParent(FootKey);
+	ItemA = ExecuteContext.Hierarchy->GetDefaultParent(ItemB);
+	PrimaryAxis = FVector{-1.f, 0.f, 0.f};
+	SecondaryAxis = FVector{0.f, 1.f, 0.f};
+	FName FootName = FootKey.Name;
+	if (FootName.ToString().Contains("_l")){}
+	else
+	{
+		PrimaryAxis *= -1.f;
+		SecondaryAxis *= -1.f;
+	}
+}	
+  \end{amzcode}
+\end{codebox}
+
+\section{围绕定点旋转}
+接下来我们要处理的是脚的旋转。当脚向后移动时，我们会让它围绕脚掌旋转。当它向后移动得更远时，我们会让它围绕脚尖旋转，这样脚在向后移动时就会抬起来。同样，当它向前移动时，我们会让它围绕脚后跟旋转，在它向前伸展的时候。所有这些都依赖于我们能够围绕另一个点旋转一个点。例如，脚骨的实际位置是在脚踝处。
+但我们需要能够围绕脚掌、脚尖或脚后跟来旋转它。所以我们需要一个函数，可以指定一个变换，比如脚骨的位置，然后再指定第二个变换作为旋转中心，比如脚掌、脚尖或者脚后跟，然后基于那个原点旋转该点。要做到这一点，我们将通过点击加号创建一个新函数并将其命名为 \dfntxt{rotateAroundPoint}。
+
+双击它，你应该就进入了函数内部
+你会看到入口和返回节点。如果你点击入口节点，你会在右侧看到输入和输出。所以我们要添加一个新的输入，点击加号
+并将其设置为一个变换
+我们称之为 transformToRotate。在这个例子中，transformToRotate 将是骨骼的变换
+它位于脚的脚踝位置。然后，在它被修改后，我们想要输出修改后的版本。所以返回节点将需要一个输出变换。所以在输出上，你可以点击加号
+并再次将其设置为一个变换
+我们将其重命名为 modifiedTransform。所以基本上我们要做的是
+从 transformToRotate 我们将修改它，然后它将进入输出。但我们不会马上连接它，因为我们还没有真正进行修改。接下来，我们需要指定我们想要围绕旋转的点。例如，脚掌或脚后跟。我们将添加一个新的输入，这只是一个向量。我们称之为 pointToRotateAround。或者你可以给它起个更好的名字，但这只是为了方便记忆。所以这将是我们围绕旋转上述变换的点。然后我们需要一个表示旋转量的变量。所以创建一个新变量，并搜索 quot，代表四元数。$我们称之为 rotationAmount$。所以这表示我们将围绕 pointToRotate 旋转原始变换 transformToRotate 的量。然后我们将输出到 modifiedTransform。所以我们要做的第一件事是，从 rotation amount 拖出，然后做乘法。这将是来自 rotation amount 的四元数乘法。那需要被插入到 A。然后从 transformToRotate 下拉，并将其从 rotation 插入到 B。必须是这个顺序，所以 A 和 B 不能交换。所以 A 必须是旋转的量，B 必须是你正在旋转的东西，也就是原始的变换。所以这样做就是用一个旋转另一个。所以现在我们可以把它插入到旋转输出中，因为它被旋转量旋转了。这对旋转有效，所以我们改变了旋转。所以如果例如旋转量是但我们还需要旋转平移。因为例如，在这种情况下，如果我们试图围绕脚掌旋转位于脚踝的脚骨，并顺时针旋转它。脚的位置将会移动，它会围绕 pointToRotateAround 呈弧形旋转。要做到这一点，我们想要得到 transformToRotate 的平移（也就是脚的位置）与 pointToRotateAround 之间的差值。以及该差值与 pointToRotateAround 之间的差值。所以我们创建那个向量，它指向从旋转点到我们正在旋转的骨骼的方向。要做到这一点，我们从 transformToRotate 的平移中拖出，然后做减法。然后减去 pointToRotateAround。然后我们要做的是旋转这个向量。所以我们得到了这条线，它基本上从，比如说，脚尖或脚掌指向脚踝。然后我们想根据旋转量来旋转那个向量。所以我们从结果中拖出，然后搜索 RotateVector。我们将用来旋转它的变换将是旋转量。这就给了我们一个向量的旋转版本。现在如果我们只是简单地将结果插入到平移中，这是不正确的，因为我们从中减去了一个数字。我们减去了 pointToRotateAround，然后旋转了它。所以我们需要做的基本上是把 pointToRotateAround 加回去。所以我们减去了它，所以我们只得到了它自己，那个向量。进行了旋转，然后我们需要把它加回去。所以从结果中拖出，然后做加法。把它插入 A 或 B，对于加法节点来说，顺序无关紧要。然后插入 pointToRotateAround，然后将结果插入平移。现在我们只需要把缩放插入到缩放中，我们不修改缩放，所以没关系。我们可以直接把它插进去，然后编译。
+\subsection{四元数}
+四元数，可表示绕三维空间中某一轴的旋转。$X、Y、Z、W$ 分量也可表示为\dfntxt{轴/角}格式。组合四元数时顺序很重要：$C = A * B$ 会得到四元数 C，逻辑上先应用 B 然后应用 A 到后续的变换（先右侧再左侧）。注意这与 FTransform 的乘法顺序相反。示例：$LocalToWorld = (LocalToWorld * DeltaRotation)$ 会在局部空间按 $DeltaRotation$ 改变旋转；示例：$LocalToWorld = (DeltaRotation * LocalToWorld)$ 会在世界空间按 $DeltaRotation$ 改变旋转。
+\subsection{使用四元数计算旋转}
+假定要让空间某点A，围绕另一点P旋转\il{Amount}量，则大致计算如下：
+\begin{notebox}
+把点 A 平移到以 P 为原点的局部坐标$（A - P）$，用四元数旋转这个向量，然后把结果平移回 P：$Result = P + Amount.RotateVector(A - P)$。
+\end{notebox}
+
+\begin{amzcode}{c++}
+// 将点 A 围绕枢轴 P 按四元数 Rotation 旋转
+static FVector RotatePointAroundPivot(const FVector& A, const FVector& P, const FQuat& Rotation)
+{
+    return P + Rotation.RotateVector(A - P);
+}
+
+// 示例用法：
+// 1) 通过轴/角（角度以弧度为单位）
+FVector RotateExample_AxisAngle(const FVector& A, const FVector& P, const FVector& Axis, float AngleRad)
+{
+    FQuat Q = FQuat(Axis.GetSafeNormal(), AngleRad); // AngleRad 为弧度
+    return RotatePointAroundPivot(A, P, Q);
+}
+
+// 2) 通过欧拉角（以度为单位）
+FVector RotateExample_EulerDegrees(const FVector& A, const FVector& P, const FRotator& RotatorDegrees)
+{
+    FQuat Q = RotatorDegrees.Quaternion(); // FRotator 以度为单位
+    return RotatePointAroundPivot(A, P, Q);
+}
+\end{amzcode}
+对于\il{struct FRigUnitMutable : public FRigUnit}相比\il{FRigUnit}多了执行引脚，并且调用的静态函数的签名有所不同。
+%\amzindex
+\end{document}
+\end{document}

@@ -1,0 +1,27 @@
+\documentclass[math,code,12pt]{amznotes}
+\xeCJKsetup{CJKmath=true}
+%\usepackage{minted}
+\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none}
+\newcommand{\il}[1]{\mintinline{c++}{#1}}%
+
+\newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
+ arc=2pt,outer arc=2pt,colback=red!10!white,colframe=#1!50!black,
+ boxsep=0pt,left=2pt,right=2pt,top=2pt,bottom=2pt,
+ boxrule=0pt,bottomrule=0pt,toprule=0pt}
+ 
+\begin{document}
+		%\frontmatter
+    %\tableofcontents
+
+\mainmatter\setchapterimage{./images/background}
+
+\chapter{技术}	
+	本章呈现许多贯穿本书的C++技术。为了在各式各样的情境(context)中都有用,它们倾向于泛化(一般化,general)和可复用(reusable),如此便可在其他情境中找出它们的应用。有些技术如partial template specialization(模板偏特化)是语言本身的特性,有些如``编译期assertions'' 则需藉由代码实作出来。	
+	
+	本章之中你将了解下列这些技术和工具:
+	\begin{itemize}
+		\item Partial template specialization(模板偏特化)
+		\item Local classes(局部类)
+		\item 型别和数值之间的映射(Int2Type和Type2Type class templates)
+	\end{itemize}
+\end{document}
