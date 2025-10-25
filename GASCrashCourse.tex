@@ -1,27 +1,360 @@
-\documentclass[math,code,12pt]{amznotes}
-\xeCJKsetup{CJKmath=true}
-%\usepackage{minted}
+\documentclass[math,code,10pt,CJKmath]{amznotes}
+%\xeCJKsetup{CJKmath=true}
+\usepackage{fontawesome5}
 \setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none}
 \newcommand{\il}[1]{\mintinline{c++}{#1}}%
 
 \newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
- arc=2pt,outer arc=2pt,colback=red!10!white,colframe=#1!50!black,
+ arc=4pt,outer arc=4pt,colback=red!10!white,colframe=#1!50!black,
  boxsep=0pt,left=2pt,right=2pt,top=2pt,bottom=2pt,
- boxrule=0pt,bottomrule=0pt,toprule=0pt}
+ boxrule=1pt,leftrule=1pt,rightrule=1pt}
  
 \begin{document}
 		%\frontmatter
     %\tableofcontents
 
-\mainmatter\setchapterimage{./images/background}
+\mainmatter
+\setchapterimage{./images/background}
 
-\chapter{技术}	
-	本章呈现许多贯穿本书的C++技术。为了在各式各样的情境(context)中都有用,它们倾向于泛化(一般化,general)和可复用(reusable),如此便可在其他情境中找出它们的应用。有些技术如partial template specialization(模板偏特化)是语言本身的特性,有些如``编译期assertions'' 则需藉由代码实作出来。	
-	
-	本章之中你将了解下列这些技术和工具:
-	\begin{itemize}
-		\item Partial template specialization(模板偏特化)
-		\item Local classes(局部类)
-		\item 型别和数值之间的映射(Int2Type和Type2Type class templates)
-	\end{itemize}
+\chapter{ASC组件}
+\section{GAS核心}
+
+本文详细阐述了游戏技能系统（Gameplay Ability System, GAS）的各个核心组件。GAS是一个功能强大且高度可扩展的框架，用于管理游戏中的角色技能、属性和各种交互效果。理解其核心构成是高效运用GAS的关键。
+
+\subsection{简述}
+游戏技能系统 (GAS) 是一个内置于虚幻引擎 (Unreal Engine) 的框架，旨在帮助开发者管理复杂的角色技能、属性（如生命值、法力值）以及状态效果（如中毒、眩晕）。它通过一系列协同工作的核心组件，提供了一个为网络多人游戏设计的、结构清晰且易于扩展的解决方案。
+
+\subsection{核心组件}
+
+GAS主要由以下几个部分构成：
+
+\subsubsection{技能系统组件 (Ability System Component, ASC)}
+\textbf{技能系统组件}是GAS的心脏。它是一个可以直接添加到Actor上的组件（Actor Component），负责处理GAS中几乎所有的交互。\dfntxt{任何希望使用技能、拥有属性或接收游戏效果的Actor都必须拥有一个ASC}。它扮演着数据中心和通信枢纽的角色。
+
+\subsubsection{属性集 (Attribute Set)}
+在GAS中，角色的数值（如生命、攻击力、速度等）被称为\textbf{属性 (Attributes)}。
+\begin{itemize}
+    \item \textbf{定义:} \textbf{属性集}是一个包含了一组相关属性的类。它定义了一个Actor可以拥有的所有属性。
+    \item \textbf{注册:} 当一个Actor拥有一个属性集时，该属性集会\dfntxt{自动在该Actor的ASC上进行注册}\footnote{通过\il{PostInitializeComponents}虚函数实现，具体代码参考}，使得这些属性能够被系统识别和修改。
+    \item \textbf{延伸:} 属性的修改通常不是直接进行的，而是通过\textbf{游戏效果 (Gameplay Effect)}来完成。属性集内部可以定义“元属性”（Meta Attributes），例如“伤害（Damage）”，它本身不被存储，但在游戏效果应用时作为一个临时变量，用于计算对其他属性（如“生命值”）的最终影响。
+\end{itemize}
+
+\subsubsection{Gameplay Ability}
+\textbf{游戏技能}是Actor可以执行的动作或技能，例如跳跃、攻击、施法等。
+\begin{itemize}
+    \item \textbf{封装:} 它们将游戏玩法的逻辑封装在独立的类中，使得逻辑清晰且易于复用。
+    \item \textbf{激活:} 技能被赋予给ASC，并通过ASC来激活。一个ASC可以同时激活多个技能。
+    \item \textbf{控制:} 技能可以被其他技能阻塞、取消，甚至可以触发其他技能。
+    \item \textbf{成本与冷却:} 技能可以设定\textbf{成本 (Cost)}和\textbf{冷却 (Cooldown)}。成本会消耗某个属性（如法力值），而冷却则会阻止技能在一段时间内被再次激活。
+    \item \textbf{异步性:} 技能拥有自己的事件图表，支持执行持续一段时间（多帧）的\textbf{潜在动作 (Latent Actions)}，例如持续施法。
+\end{itemize}
+
+\subsubsection{游戏效果 (Gameplay Effect, GE)}
+\textbf{游戏效果}是用于修改Actor属性的“数据配方”。
+\begin{itemize}
+    \item \textbf{功能:} 它们被用来施加伤害、治疗、增益 (Buffs) 或减益 (Debuffs) 效果。
+    \item \textbf{持续类型:} 游戏效果可以是即时的 (\il{Instant})、持续一段时间的 (\il{Duration})，或是无限的 (\il{Infinite})，直到被手动移除。
+    \item \textbf{延伸功能:} 除了修改属性，GE还可以赋予其他技能、添加\textbf{游戏标签 (Gameplay Tags)}或触发\textbf{游戏提示 (Gameplay Cues)}。
+\end{itemize}
+
+\subsubsection{游戏提示 (Gameplay Cue, GC)}
+\textbf{游戏提示}专门用于处理非游戏逻辑相关的表现效果，如播放粒子特效、音效、镜头晃动等。
+\begin{itemize}
+    \item \textbf{解耦:} 它们将表现层与逻辑层完全解耦。例如，一个“火球术”的\texttt{Gameplay Ability}在击中目标时，只需触发一个“Cue.Fire.Explosion”的GC事件，而具体的爆炸特效和声音则由监听这个事件的GC对象来处理。
+    \item \textbf{网络同步:} GC的设计天然支持网络同步，极大地简化了在多人游戏中实现表现效果的复杂度。
+\end{itemize}
+
+\subsubsection{技能任务 (Ability Tasks)}
+\textbf{技能任务}是\texttt{Gameplay Ability}中可以使用的异步工作节点。它们简化了在技能中执行复杂或耗时操作的流程。
+\begin{itemize}
+    \item \textbf{常见任务:} 引擎内置了许多常用的任务，例如“播放蒙太奇动画 (Play Montage)”、“等待事件 (Wait for Gameplay Event)”、“等待属性变化 (Wait for Attribute Change)”以及“延迟 (Delay)”。
+    \item \textbf{简化逻辑:} 它们使得在技能蓝图中以直观、线性的方式实现复杂的异步逻辑成为可能。
+\end{itemize}
+
+\subsubsection{游戏标签 (Gameplay Tag)}
+\textbf{游戏标签}是一种分层级的命名标记（例如 \texttt{State.Buff.Stunned}），虽然它不是GAS独有的系统，但在GAS中扮演着至关重要的角色。
+\begin{itemize}
+    \item \textbf{识别与状态:} 标签可以用来识别技能、标记Actor的状态（如“昏迷”、“隐身”）。
+    \item \textbf{逻辑控制:} 技能之间通过标签来进行交互，例如，一个拥有“昏迷”标签的Actor可能被禁止使用某些技能。技能的冷却和成本也可以通过标签来管理。
+    \item \textbf{事件通信:} 标签是触发游戏事件的核心机制，技能可以等待特定的标签事件来执行后续逻辑。
+\end{itemize}
+
+\subsection{总结与延伸}
+GAS的这些核心组件共同构建了一个强大而灵活的系统。它们之间的关系可以概括为：
+\begin{quote}
+		\itshape
+    一个Actor上的\textbf{技能系统组件 (ASC)}管理着其拥有的\textbf{属性集 (Attribute Set)}和\textbf{游戏技能 (Gameplay Ability)}。当一个\textbf{技能}被激活时，它可能会消耗某个\textbf{属性}作为成本，并应用一个\textbf{游戏效果 (Gameplay Effect)}到目标身上。这个\textbf{游戏效果}会修改目标ASC上的\textbf{属性}，并可能触发一个\textbf{游戏提示 (Gameplay Cue)}来播放视觉特效。整个过程的状态和逻辑流转则由\textbf{游戏标签 (Gameplay Tag)}来精确控制。
+\end{quote}
+这种架构不仅使得游戏逻辑模块化，而且其为网络同步设计的底层机制，让开发者能够更专注于玩法设计，而不是底层的技术实现。
+
+
+\section{ASC}
+本节详细介绍了在虚幻引擎中设置和使用游戏技能系统组件 (Ability System Component, ASC) 的核心概念和两种主要实现模式。
+
+\subsection{核心概念}
+\begin{itemize}
+    \item \textbf{ASC的本质}: 它是一个\texttt{ActorComponent}，必须由一个\texttt{Actor}拥有。
+    \item \textbf{两个关键指针}: ASC内部维护两个重要的变量，一旦初始化，ASC会跟踪这两个重要变量：
+    \begin{description}
+        \item[\texttt{OwnerActor}:] ASC的逻辑所有者，负责管理ASC的生命周期和状态。
+        \item[\texttt{AvatarActor}:] ASC在游戏世界中的视觉表现，通常是玩家或NPC的角色模型。技能（Abilities）的动画和效果通常在这个\texttt{Actor}上播放。
+    \end{description}
+\end{itemize}
+
+\subsection{两种主流的ASC所有权模式}
+\begin{enumerate}
+    \item \textbf{模式一：由Pawn/Character直接拥有ASC}
+    \begin{itemize}
+        \item 在这种模式下，\texttt{OwnerActor}和\texttt{AvatarActor}都指向同一个\texttt{Pawn}或\texttt{Character}。
+        \item \textbf{优点}: 实现简单直接。
+        \item \textbf{适用场景}: 通常用于AI控制的NPC或敌人，因为它们通常不需要像玩家那样持久化的状态。
+    \end{itemize}
+    
+    \item \textbf{模式二：由PlayerState拥有ASC}
+    \begin{itemize}
+        \item 在这种模式下，\texttt{OwnerActor}指向\texttt{PlayerState}，而\texttt{AvatarActor}指向玩家控制的\texttt{Pawn}或\texttt{Character}。
+        \item \textbf{优点}:
+        \begin{itemize}
+            \item \textbf{状态持久化}: 由于\texttt{PlayerState}在玩家的整个连接会话中是持久的，即使其控制的\texttt{Character}死亡并重生，ASC及其所包含的技能和属性状态也能得以保留。
+            \item \textbf{代码解耦}: 保持\texttt{Character}类的整洁，将技能相关的逻辑分离到\texttt{PlayerState}中。
+        \end{itemize}
+        \item \textbf{适用场景}: 强烈推荐用于玩家控制的角色。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{\texttt{IAbilitySystemInterface} 接口}
+\begin{itemize}
+    \item 这是一个提供单一函数 \texttt{GetAbilitySystemComponent()} 的接口。
+    \item GAS框架的许多内部系统都依赖此接口来从一个\texttt{Actor}获取其ASC。
+    \item \textbf{实现建议}: 应该在能够提供ASC的\texttt{Actor}上实现此接口。
+    \begin{itemize}
+        \item 如果ASC在\texttt{Character}上，则\texttt{Character}实现接口并直接返回其ASC。
+        \item 如果ASC在\texttt{PlayerState}上，\texttt{Character}仍然需要实现该接口，但其实现逻辑是从其\texttt{PlayerState}中获取并返回ASC。
+    \end{itemize}
+\end{itemize}
+
+\subsection{ASC的初始化流程}
+\begin{enumerate}
+    \item \textbf{创建并配置ASC}: 在其所有者（如此处为\texttt{PlayerState}）的构造函数中，使用\texttt{CreateDefaultSubobject}创建ASC实例。
+    \item \textbf{设置网络复制}:
+    \begin{itemize}
+        \item 调用\texttt{SetIsReplicated(true)}使其可复制。
+        \item 调用\texttt{SetReplicationMode()}设置为\texttt{Mixed}或\texttt{Full}。对于玩家角色，\texttt{Mixed}模式是最佳选择，它为所有者提供完整信息，为其他客户端提供最简信息，从而优化网络带宽。
+        \item 建议提高\texttt{PlayerState}的\texttt{NetUpdateFrequency}（例如设置为100），以确保技能状态的快速同步。
+    \end{itemize}
+    \item \textbf{初始化Owner和Avatar}: 必须调用ASC的\texttt{InitAbilityActorInfo()}函数，并传入正确的\texttt{OwnerActor}和\texttt{AvatarActor}。
+    \begin{itemize}
+        \item \textbf{服务器端}: 在\texttt{Character}的\texttt{PossessedBy()}函数中调用，因为此时\texttt{Controller}和\texttt{PlayerState}已经可用。
+        \item \textbf{客户端}: 在\texttt{Character}的\texttt{OnRep\_PlayerState()}函数中调用，以确保在客户端\texttt{PlayerState}已经成功复制后才执行初始化。
+    \end{itemize}
+\end{enumerate}
+
+
+\section{Gameplay Ability (GA) 基础}
+本节主要介绍了游戏技能（Gameplay Ability）的基本概念、如何在虚幻引擎编辑器中创建它，以及其核心属性的配置。
+
+\subsection{创建与组织}
+\begin{itemize}
+    \item \textbf{创建方式}: 可以通过C++创建基类，也可以直接在编辑器中创建蓝图类。本节首先演示了如何创建游戏技能蓝图（Gameplay Ability Blueprint）。
+    \item \textbf{命名约定}: 建议使用\texttt{GA\_}作为游戏技能蓝图的前缀，例如\texttt{GA\_Primary}。
+    \item \textbf{文件组织}: 建议在项目中创建一个专门的\texttt{AbilitySystem}文件夹，并在其中根据技能的使用者（如\texttt{Player}、\texttt{Enemy}）进一步组织。
+\end{itemize}
+
+\subsection{Gameplay Ability 蓝图核心事件}
+\begin{itemize}
+    \item \mybox[blue]{\texttt{Event ActivateAbility}}: 这是技能被激活时触发的事件，类似于\texttt{Actor}的\texttt{BeginPlay}。所有技能的主要逻辑都从这里开始。
+    \item \mybox[blue]{\texttt{Event OnEndAbility}}: 当技能结束时触发的事件，用于执行清理工作或后续逻辑。
+    \item \mybox[blue]{\texttt{EndAbility}节点}: 在技能逻辑执行完毕后，必须调用此节点来显式地结束技能，否则技能将一直处于激活状态。
+\end{itemize}
+
+\subsection{核心属性详解 (Details Panel - Advanced)}
+\begin{description}
+    \item \dfntxt{Instancing Policy}: 定义了技能对象的实例化方式，对性能和状态管理至关重要。
+    \begin{itemize}
+        \item \textbf{\texttt{Instanced per Execution} (默认)}: 每次激活技能都会创建一个新的技能实例。这允许多个相同技能的实例同时存在，但会增加内存开销。
+        \item \textbf{\texttt{Instanced per Actor}}: 每个\texttt{Actor}只拥有一个该技能的实例。当技能被再次激活时，会重用这个实例。这是推荐的设置，因为它更节省资源。
+        \item \textbf{\texttt{Non-Instanced}}: 技能不会被实例化为对象，不能保存状态（变量）。其行为类似于一个静态函数库，适用于无状态的、一次性的效果。
+    \end{itemize}
+    
+    \item\dfntxt{Net Execution Policy}: 决定了技能在网络环境下的执行方式。
+    \begin{itemize}
+        \item \textbf{\texttt{Local Predicted} (默认)}: 客户端发起激活后，技能会立即在本地执行（预测），同时向服务器发送请求。服务器验证后也会执行该技能。这是处理玩家输入的理想选择，能提供流畅的响应体验。
+        \item \textbf{\texttt{Local Only}}: 技能只在本地执行，不会通知服务器。
+        \item \textbf{\texttt{Server Initiated}}: 技能由服务器发起，然后复制到所属的客户端上执行。
+        \item \textbf{\texttt{Server Only}}: 技能只能在服务器上激活和执行，不会复制到客户端。
+    \end{itemize}
+    
+    \item\dfntxt{Replication Policy}: 这是一个容易引起误解的设置。即使你希望技能是可复制的，也\textbf{不应修改此设置}，应保持默认的\il{Do Not Replicate}。技能的复制行为主要由\il{Net Execution Policy}控制。
+    
+    \item\dfntxt{Server Respects Remote Ability Cancellation}:默认勾选（\textcolor{red}{\faCheck}），表示如果你是客户端，并且本机（local）取消了技能，服务器会响应这个取消，你的技能会被取消。至于服务端永远可以取消客户端的技能。
+    \item\dfntxt{Retrigger Instanced Ability}：“重新触发已实例化的技能” 是一个布尔选项，它决定了当你尝试激活一个已经在运行中的技能时会发生什么。具体来说：
+    	\begin{itemize}
+    	\item 启用:当你再次尝试激活一个当前正在运行的技能时，系统会先强制结束掉这个正在运行的技能实例，然后立刻重新激活它（即开始一个新的技能实例）。例如，假想一个需要持续引导的激光束技能。如果启用了这个选项，玩家在引导过程中再次按下技能键，激光束会中断并从头开始重新发射。
+    	\item 未启用 (通常是默认值):当你尝试激活一个已经在运行的技能时，这次新的激活请求会被直接忽略，什么也不会发生。当前的技能会继续运行，直到它自己正常结束。
+    	\end{itemize}
+   总而言之，这个选项允许你决定一个正在运行的技能是否可以被它自身的下一次激活所“打断并重置”。
+    
+    
+\end{description}
+
+\subsection{简单示例}
+本节创建了一个名为\texttt{GA\_Primary}的技能，其功能非常简单：
+\begin{enumerate}
+    \item 在\texttt{Event ActivateAbility}事件后连接一个\texttt{Print String}节点，用于在屏幕上打印调试信息，以确认技能已被激活。
+    \item 在\texttt{Print String}节点后调用\texttt{EndAbility}节点，使技能在打印信息后立即结束。
+\end{enumerate}
+这个简单的技能为后续学习如何“赋予”和“激活”技能奠定了基础。
+
+
+\section{赋予角色游戏技能 (Giving Gameplay Abilities)}
+本节详细介绍了如何将一个创建好的游戏技能（Gameplay Ability）赋予给角色，这是激活技能的前提条件。
+
+\subsection{核心概念}
+\begin{itemize}
+    \item \textbf{赋予技能的前提}: 一个角色（或任何拥有ASC的Actor）必须首先被“赋予”一个技能，然后才能激活它。直接尝试激活一个未被赋予的技能是无效的。
+    \item \textbf{赋予技能的机制}: 通过调用技能系统组件（ASC）的 \texttt{GiveAbility()} 函数来实现。
+    \item \textbf{\texttt{FGameplayAbilitySpec}}: \texttt{GiveAbility()} 函数需要的不是技能类本身，而是一个名为 \il{FGameplayAbilitySpec} 的结构体。这是一个轻量级的结构，包含了要赋予的技能的实例信息，例如：
+    \begin{itemize}
+        \item 技能的类 (\texttt{UGameplayAbility} 的子类)。
+        \item 技能的等级 (Level)。
+        \item 与技能绑定的输入ID (Input ID，一个旧版输入系统的概念)。
+        \item 来源对象 (Source Object)。
+    \end{itemize}
+\end{itemize}
+
+\subsection{在C++中实现赋予技能的逻辑}
+在角色的基类 (\texttt{ACCBaseCharacter}) 中添加赋予技能的通用逻辑，以便玩家和未来的敌人类都可以复用。
+\begin{enumerate}
+    \item \textbf{创建技能数组}: 在 \texttt{ACCBaseCharacter.h} 中，定义一个 \texttt{TArray} 用于存储需要在游戏开始时赋予给角色的技能类。
+\begin{minted}{cpp}
+UPROPERTY(EditDefaultsOnly, Category = "Abilities")
+TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
+\end{minted}
+    这个数组被标记为\texttt{EditDefaultsOnly}，意味着可以在角色的蓝图中方便地配置要赋予哪些技能。
+
+    \item \textbf{创建赋予技能的函数}: 在 \texttt{ACCBaseCharacter} 中创建\il{protected} 函数 \texttt{GiveStartupAbilities()}。
+    \begin{minted}{cpp}
+    void ACCBaseCharacter::GiveStartupAbilities()
+    {
+        // 1. 检查ASC是否有效
+        if (!IsValid(GetAbilitySystemComponent())) return;
+
+        // 2. 遍历StartupAbilities数组
+        for (const TSubclassOf<UGameplayAbility>& AbilityClass : StartupAbilities)
+        {
+            // 3. 为每个技能类创建一个FGameplayAbilitySpec
+            FGameplayAbilitySpec AbilitySpec(AbilityClass);
+
+            // 4. 调用ASC的GiveAbility函数
+            GetAbilitySystemComponent()->GiveAbility(AbilitySpec);
+        }
+    }
+    \end{minted}
+
+    \item \textbf{选择正确的调用时机}: 赋予技能是一个\textbf{只应在服务器上执行一次}的操作。
+    \begin{itemize}
+        \item 在玩家角色类 (\texttt{ACCPlayerCharacter}) 的 \texttt{PossessedBy()} 函数中调用 \texttt{GiveStartupAbilities()}。
+        \item \texttt{PossessedBy()} 是一个\textbf{仅在服务器上调用}的函数，它标志着角色已经被一个控制器所拥有，此时是初始化技能的理想时机。
+        \item 通过增加一个 \texttt{HasAuthority()} 检查，可以确保该逻辑严格只在服务器上运行。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{在蓝图中配置和测试}
+\begin{enumerate}
+    \item \textbf{配置技能}: 在玩家角色的蓝图 (\texttt{BP\_CC\_PlayerCharacter})，找到 \texttt{StartupAbilities} 数组，并将之前创建的 \texttt{GA\_Primary} 技能蓝图添加进去。
+    \item \textbf{蓝图快速测试}:
+    \begin{itemize}
+        \item 为了快速验证，在角色蓝图的事件图表中，将主输入事件 (\texttt{IA\_Primary}) 连接到了 \texttt{Try Activate Ability by Class} 节点。
+        \item \texttt{Get Ability System Component} 蓝图节点 (来自 \texttt{AbilitySystemBlueprintLibrary}) 会自动利用 \texttt{IAbilitySystemInterface} 来获取ASC。
+        \item 运行游戏并点击鼠标左键，可以看到屏幕上打印出 \texttt{GA\_Primary} 中设置的调试信息，证明技能被成功赋予并激活。
+        \item 作为反向验证，如果从 \texttt{StartupAbilities} 数组中移除 \texttt{GA\_Primary}，再次运行游戏时点击将无任何反应，证明了“必须先赋予才能激活”的原则。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{后续步骤}
+虽然蓝图测试很方便，但最终目标是在C++中处理技能激活。接下来的计划是在\texttt{PlayerController} 中，通过“游戏标签” (\texttt{Gameplay Tag}) 来激活技能，这是一种更灵活和推荐的做法。
+
+
+\section{原生游戏标签 (Native Gameplay Tags)}
+本节详细讲解了游戏标签（Gameplay Tags）的概念，并重点介绍了在C++中创建和管理“原生标签”的专业方法，这被认为是比在编辑器中创建标签更优越的实践。
+
+\subsection{游戏标签 (Gameplay Tag) 简介}
+\begin{itemize}
+    \item \textbf{本质}: 游戏标签是一个轻量级的、层级化的命名标识（例如 \texttt{Character.Skill.Primary}），其在代码中的类型为 \texttt{FGameplayTag}。
+    \item \textbf{创建方式}:
+    \begin{enumerate}
+        \item \textbf{编辑器创建}: 在项目设置中手动添加。优点是简单快捷，但缺点是容易因拼写错误导致bug，且在大型项目中难以维护。
+        \item \textbf{C++原生创建}: 在代码中定义和注册标签。这是本节推荐的核心方法。
+    \end{enumerate}
+    \item \textbf{原生标签的优势}:
+    \begin{itemize}
+        \item \textbf{编译时安全}: 由于标签在C++中定义，任何拼写错误都会导致编译失败，从而在早期阶段就能发现问题。
+        \item \textbf{集中管理}: 所有核心标签都集中在一个或多个C++文件中，便于查找、修改和维护。
+        \item \textbf{高性能}: 原生标签在引擎启动时被加载，访问效率更高。
+    \end{itemize}
+\end{itemize}
+
+\subsection{实现原生游戏标签的步骤}
+\begin{enumerate}
+    \item \textbf{创建标签管理器单例 (Singleton)}:
+    \begin{itemize}
+        \item 创建一个专门的C++类（如此处的 \texttt{FCCGameplayTags}）来统一管理项目的所有原生标签。
+        \item 在该类中，为每一个需要的标签声明一个 \texttt{FGameplayTag} 成员变量。
+        \item 实现单例模式，提供一个静态的 \texttt{Get()} 方法来全局访问该类的唯一实例。
+    \end{itemize}
+    \begin{minted}{cpp}
+    // FCCGameplayTags.h
+    class FCCGameplayTags
+    {
+    public:
+        static const FCCGameplayTags& Get() { return GameplayTags; }
+        static void InitializeNativeTags();
+
+        FGameplayTag Attributes_Primary_Strength;
+        // ... 其他标签
+    private:
+        static FCCGameplayTags GameplayTags;
+    };
+    \end{minted}
+
+    \item \textbf{注册原生标签}:
+    \begin{itemize}
+        \item 在该单例类的实现文件 (.cpp) 中，实现 \texttt{InitializeNativeTags} 函数。
+        \item 使用 \texttt{UGameplayTagsManager::Get().AddNativeGameplayTag()} 或 \texttt{RequestGameplayTag()} 方法，通过字符串来创建标签，并将其赋值给之前声明的 \texttt{FGameplayTag} 变量。
+    \end{itemize}
+\begin{minted}[breakanywhere,breaklines]{cpp}
+// FCCGameplayTags.cpp
+void FCCGameplayTags::InitializeNativeTags()
+{
+	GameplayTags.Attributes_Primary_Strength = UGameplayTagsManager::Get().AddNativeGameplayTag(
+		FName("Attributes.Primary.Strength"),
+  	FString("Primary attribute for physical damage")
+  );
+	// ... 注册其他标签
+}
+    \end{minted}
+
+    \item \textbf{配置项目以加载原生标签}:
+    \begin{itemize}
+        \item 这是至关重要的一步。引擎需要在启动时知道去哪里加载这些在C++中定义的标签。
+        \item 打开项目的配置文件 \texttt{Config/DefaultGame.ini}。
+        \item 在 \texttt{[/Script/GameplayTags.GameplayTagsSettings]} 配置节下，添加一行指向你的标签单例类的路径。
+    \end{itemize}
+    \begin{minted}{cpp}
+    [/Script/GameplayTags.GameplayTagsSettings]
+    +GameplayTagList=(Path="/Script/YourProjectName.FCCGameplayTags")
+    \end{minted}
+    
+    \item \textbf{在模块启动时调用初始化}: 在你的游戏模块的主C++文件中（例如 \texttt{YourProject.cpp}），重写 \texttt{StartupModule()} 函数，并在其中调用标签单例的 \texttt{InitializeNativeTags()} 函数。
+    
+    \item \textbf{在技能蓝图中使用标签}:
+    \begin{itemize}
+        \item 编译代码并重启编辑器后，新创建的原生标签就会出现在编辑器的标签选择器中。
+        \item 打开之前创建的 \texttt{GA\_Primary} 技能蓝图，在“类默认值”的“Tags”部分，找到 \texttt{Ability Tags} 属性。
+        \item 将刚刚创建的原生标签（例如 \texttt{InputTag.Primary}）赋予给这个技能。这个标签成为了该技能的唯一标识。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{总结}
+通过以上步骤，我们成功地创建了一个原生游戏标签，并将其与一个具体的技能关联起来。这为后续通过标签来准确、高效地激活特定技能奠定了坚实的基础。
 \end{document}
