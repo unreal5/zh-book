@@ -1,7 +1,7 @@
-\documentclass[math,code,10pt,CJKmath]{amznotes}
+\documentclass[10pt,CJKmath]{zhbook-v1}
 %\xeCJKsetup{CJKmath=true}
 \usepackage{fontawesome5}
-\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none}
+\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none,breakanywheresymbolpre=\rotatebox{-90}{\mbox{\tiny\faLevelDown*}}}
 \newcommand{\il}[1]{\mintinline{c++}{#1}}%
 
 \newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
@@ -226,30 +226,21 @@ GAS的这些核心组件共同构建了一个强大而灵活的系统。它们�
 在角色的基类 (\texttt{ACCBaseCharacter}) 中添加赋予技能的通用逻辑，以便玩家和未来的敌人类都可以复用。
 \begin{enumerate}
     \item \textbf{创建技能数组}: 在 \texttt{ACCBaseCharacter.h} 中，定义一个 \texttt{TArray} 用于存储需要在游戏开始时赋予给角色的技能类。
-\begin{minted}{cpp}
+\begin{amzcode}{cpp}
 UPROPERTY(EditDefaultsOnly, Category = "Abilities")
 TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
-\end{minted}
+\\end{amzcode}
     这个数组被标记为\texttt{EditDefaultsOnly}，意味着可以在角色的蓝图中方便地配置要赋予哪些技能。
 
     \item \textbf{创建赋予技能的函数}: 在 \texttt{ACCBaseCharacter} 中创建\il{protected} 函数 \texttt{GiveStartupAbilities()}。
-    \begin{minted}{cpp}
-    void ACCBaseCharacter::GiveStartupAbilities()
-    {
-        // 1. 检查ASC是否有效
-        if (!IsValid(GetAbilitySystemComponent())) return;
-
-        // 2. 遍历StartupAbilities数组
-        for (const TSubclassOf<UGameplayAbility>& AbilityClass : StartupAbilities)
-        {
-            // 3. 为每个技能类创建一个FGameplayAbilitySpec
-            FGameplayAbilitySpec AbilitySpec(AbilityClass);
-
-            // 4. 调用ASC的GiveAbility函数
-            GetAbilitySystemComponent()->GiveAbility(AbilitySpec);
-        }
-    }
-    \end{minted}
+    \begin{amzcode}{cpp}
+void ACCBaseCharacter::GiveStartupAbilities()
+{
+	...
+	FGameplayAbilitySpec AbilitySpec(AbilityClass);
+	GetAbilitySystemComponent()->GiveAbility(AbilitySpec);
+}
+    \\end{amzcode}
 
     \item \textbf{选择正确的调用时机}: 赋予技能是一个\textbf{只应在服务器上执行一次}的操作。
     \begin{itemize}
@@ -302,7 +293,7 @@ TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
         \item 在该类中，为每一个需要的标签声明一个 \texttt{FGameplayTag} 成员变量。
         \item 实现单例模式，提供一个静态的 \texttt{Get()} 方法来全局访问该类的唯一实例。
     \end{itemize}
-    \begin{minted}{cpp}
+    \begin{amzcode}{cpp}
     // FCCGameplayTags.h
     class FCCGameplayTags
     {
@@ -315,14 +306,14 @@ TArray<TSubclassOf<UGameplayAbility>> StartupAbilities;
     private:
         static FCCGameplayTags GameplayTags;
     };
-    \end{minted}
+    \\end{amzcode}
 
     \item \textbf{注册原生标签}:
     \begin{itemize}
         \item 在该单例类的实现文件 (.cpp) 中，实现 \texttt{InitializeNativeTags} 函数。
         \item 使用 \texttt{UGameplayTagsManager::Get().AddNativeGameplayTag()} 或 \texttt{RequestGameplayTag()} 方法，通过字符串来创建标签，并将其赋值给之前声明的 \texttt{FGameplayTag} 变量。
     \end{itemize}
-\begin{minted}[breakanywhere,breaklines]{cpp}
+\begin{amzcode}{cpp}
 // FCCGameplayTags.cpp
 void FCCGameplayTags::InitializeNativeTags()
 {
@@ -332,7 +323,7 @@ void FCCGameplayTags::InitializeNativeTags()
   );
 	// ... 注册其他标签
 }
-    \end{minted}
+    \\end{amzcode}
 
     \item \textbf{配置项目以加载原生标签}:
     \begin{itemize}
@@ -340,10 +331,10 @@ void FCCGameplayTags::InitializeNativeTags()
         \item 打开项目的配置文件 \texttt{Config/DefaultGame.ini}。
         \item 在 \texttt{[/Script/GameplayTags.GameplayTagsSettings]} 配置节下，添加一行指向你的标签单例类的路径。
     \end{itemize}
-    \begin{minted}{cpp}
+    \begin{amzcode}{cpp}
     [/Script/GameplayTags.GameplayTagsSettings]
     +GameplayTagList=(Path="/Script/YourProjectName.FCCGameplayTags")
-    \end{minted}
+    \\end{amzcode}
     
     \item \textbf{在模块启动时调用初始化}: 在你的游戏模块的主C++文件中（例如 \texttt{YourProject.cpp}），重写 \texttt{StartupModule()} 函数，并在其中调用标签单例的 \texttt{InitializeNativeTags()} 函数。
     
@@ -357,4 +348,271 @@ void FCCGameplayTags::InitializeNativeTags()
 
 \subsection{总结}
 通过以上步骤，我们成功地创建了一个原生游戏标签，并将其与一个具体的技能关联起来。这为后续通过标签来准确、高效地激活特定技能奠定了坚实的基础。
+
+
+\section{通过标签激活技能}
+本节核心内容是从上一节课中“按类激活技能”的测试方法，过渡到更为专业和灵活的“按游戏标签激活技能”的正式方法。这一转变将输入逻辑从角色蓝图转移到了C++的玩家控制器中。
+
+\subsection{问题：按类激活的局限性}
+在蓝图中直接使用\mybox{Try Activate Ability by Class}节点来激活一个特定的技能类，存在明显的缺点：
+\begin{itemize}
+    \item \textbf{紧密耦合}: 输入操作（如鼠标左键点击）与一个具体的技能类（如\texttt{GA\_Primary}）被硬编码在一起。
+    \item \textbf{缺乏灵活性}: 如果想让鼠标左键触发另一个不同的技能，就必须去修改蓝图或C++代码，这在项目中非常不便。
+\end{itemize}
+
+\subsection{解决方案：按标签激活的优势}
+更优越的方法是让输入操作与一个通用的“输入标签”（Input Tag）关联，而不是一个具体的技能。
+\begin{itemize}
+    \item \textbf{解耦}: 输入代码只负责广播一个\dfntxt{意图}，例如“玩家按下了主要攻击键”，这个意图由一个输入标签（如\texttt{InputTag.Primary}）来代表。
+    \item \textbf{高度灵活}: 任何被赋予给角色、并且拥有\texttt{InputTag.Primary}这个标签的技能，都可以响应这个输入。更换主要攻击技能时，只需修改技能蓝图中的标签，而无需改动任何输入代码。
+\end{itemize}
+
+\subsection{C++ 实现步骤}
+\begin{enumerate}
+    \item \textbf{将输入逻辑移至玩家控制器 (Player Controller)}:
+    \begin{itemize}
+        \item 玩家控制器是处理玩家输入的最合适场所。打开\texttt{ACCPlayerController}类。
+    \end{itemize}
+
+    \item \textbf{创建接口以获取ASC}:
+    \begin{itemize}
+        \item 玩家控制器需要一种通用的方式来获取其所控制的Pawn身上的技能系统组件（ASC），而不想知道Pawn的具体类型。
+        \item 为此，创建了一个新的C++接口，名为\texttt{ICombatInterface}。
+        \item 在此接口中，定义了一个纯虚函数\texttt{GetAbilitySystemComponent()}。
+        \item 让玩家角色类\texttt{ACCPlayerCharacter}继承并实现这个新接口。现在，控制器可以通过接口指针安全地调用\texttt{GetAbilitySystemComponent()}，而无需进行类型转换。
+    \end{itemize}
+
+    \item \textbf{实现输入处理函数}:
+    \begin{itemize}
+        \item 在\texttt{ACCPlayerController}中，为主要输入动作创建了处理函数，例如\texttt{PrimaryInputPressed()}。
+        \item 在此函数中，通过接口获取ASC，然后调用\texttt{ASC->TryActivateAbilitiesByTag()}，并传入之前定义好的原生输入标签（\texttt{InputTag.Primary}）。
+    \end{itemize}
+    \begin{amzcode}{cpp}
+    void ACCPlayerController::PrimaryInputPressed()
+    {
+        // 获取ASC
+        ICombatInterface* CombatInterface = Cast<ICombatInterface>(GetPawn());
+        if (CombatInterface)
+        {
+            // 通过标签激活技能
+            CombatInterface->GetAbilitySystemComponent()->TryActivateAbilitiesByTag(
+                FCCGameplayTags::Get().InputTag_Primary
+            );
+        }
+    }
+    \end{amzcode}
+
+    \item \textbf{绑定增强输入 (Enhanced Input)}:
+    \begin{itemize}
+        \item 在\texttt{ACCPlayerController}的\texttt{SetupInputComponent()}函数中，获取增强输入子系统。
+        \item 将输入资产（\texttt{IA\_Primary}）的\texttt{Triggered}事件绑定到刚刚创建的\texttt{PrimaryInputPressed()}函数上。
+    \end{itemize}
+
+    \item \textbf{清理蓝图}:
+    \begin{itemize}
+        \item 最后，回到玩家角色蓝图(\texttt{BP\_CCPlayerCharacter})中，删除之前用于测试的、连接在\texttt{IA\_Primary}输入事件后面的所有蓝图节点。
+        \item 现在所有的输入到技能激活的流程都已在C++中清晰地建立起来。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{总结}
+通过本节课的操作，项目建立了一个健壮且可扩展的输入到技能激活的系统。玩家的输入现在被抽象成一个“标签意图”，由C++控制器广播，任何匹配该标签的技能都可以被激活，实现了逻辑的高度解耦。
+
+\section{添加次要和第三技能}
+本节字幕在前一节课的基础上，演示了如何扩展输入系统和技能系统，为角色添加更多的技能，即次要技能（Secondary Ability）和第三技能（Tertiary Ability），并将它们分别绑定到鼠标右键和键盘按键上。
+
+\subsection{扩展原生游戏标签}
+为了标识新的输入动作，首先需要在C++中定义新的原生游戏标签。
+\begin{enumerate}
+    \item 在标签管理器类 \texttt{FCCGameplayTags} 中，添加新的 \texttt{FGameplayTag} 成员变量。
+    \begin{amzcode}{cpp}
+    FGameplayTag InputTag_Secondary;
+    FGameplayTag InputTag_Tertiary;
+    \end{amzcode}
+    \item 在 \texttt{InitializeNativeTags} 函数中，为这些新标签赋值，并添加描述。
+    \begin{amzcode}{cpp}
+    GameplayTags.InputTag_Secondary = UGameplayTagsManager::Get().AddNativeGameplayTag(
+        FName("InputTag.Secondary"), FString("Input for Secondary Ability")
+    );
+    GameplayTags.InputTag_Tertiary = UGameplayTagsManager::Get().AddNativeGameplayTag(
+        FName("InputTag.Tertiary"), FString("Input for Tertiary Ability")
+    );
+    \end{amzcode}
+\end{enumerate}
+
+\subsection{在编辑器中配置增强输入}
+接下来，在虚幻引擎编辑器中创建新的输入动作并将其映射到具体的物理按键。
+\begin{enumerate}
+    \item \textbf{创建输入动作 (Input Actions)}:
+    \begin{itemize}
+        \item 在内容浏览器中，创建两个新的输入动作资源：\texttt{IA\_Secondary} 和 \texttt{IA\_Tertiary}。
+    \end{itemize}
+    \item \textbf{更新输入映射上下文 (Input Mapping Context)}:
+    \begin{itemize}
+        \item 打开项目的输入映射上下文资源 (\texttt{IMC\_Default})。
+        \item 添加新的映射关系：
+        \begin{itemize}
+            \item 将 \texttt{IA\_Secondary} 映射到“鼠标右键” (Right Mouse Button)。
+            \item 将 \texttt{IA\_Tertiary} 映射到键盘“1”键。
+        \end{itemize}
+    \end{itemize}
+\end{enumerate}
+
+\subsection{扩展玩家控制器的C++代码}
+在 \texttt{ACCPlayerController} 中添加处理新输入的逻辑。
+\begin{enumerate}
+    \item \textbf{添加输入处理函数}:
+    \begin{itemize}
+        \item 声明并定义新的函数来处理次要和第三输入的按下事件：\il{SecondaryInputPressed()} 和 \il{TertiaryInputPressed()}。
+        \item 这些函数的实现逻辑与 \il{PrimaryInputPressed()} 完全相同，只是它们在调用 \il{TryActivateAbilitiesByTag()} 时传入了各自对应的输入标签（\il{InputTag.Secondary} 和 \il{InputTag.Tertiary}）。
+    \end{itemize}
+    \item \textbf{绑定输入动作}:
+    \begin{itemize}
+        \item 在 \texttt{SetupInputComponent()} 函数中，将新创建的输入动作资源 (\texttt{IA\_Secondary} 和 \texttt{IA\_Tertiary}) 的 \texttt{Triggered} 事件分别绑定到 \texttt{SecondaryInputPressed()} 和 \texttt{TertiaryInputPressed()} 函数上。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{创建并配置新技能}
+最后，创建新的技能蓝图，并将它们赋予角色。
+\begin{enumerate}
+    \item \textbf{创建技能蓝图}:
+    \begin{itemize}
+        \item 复制现有的 \texttt{GA\_Primary} 技能蓝图，创建出 \texttt{GA\_Secondary} 和 \texttt{GA\_Tertiary}。
+        \item 修改这两个新技能蓝图内部的 \texttt{Print String} 节点，使其打印各自的名称，以便于调试时区分。
+    \end{itemize}
+    \item \textbf{分配输入标签}:
+    \begin{itemize}
+        \item 打开 \texttt{GA\_Secondary} 的类默认值，将其 \texttt{Ability Tags} 设置为 \texttt{InputTag.Secondary}。
+        \item 打开 \texttt{GA\_Tertiary} 的类默认值，将其 \texttt{Ability Tags} 设置为 \texttt{InputTag.Tertiary}。
+    \end{itemize}
+    \item \textbf{赋予技能给角色}:
+    \begin{itemize}
+        \item 打开玩家角色蓝图 \texttt{BP\_CCPlayerCharacter}。
+        \item 在其 \texttt{StartupAbilities} 数组中，添加 \texttt{GA\_Secondary} 和 \texttt{GA\_Tertiary}。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{测试与验证}
+完成以上所有步骤并编译代码后，运行游戏。现在，点击鼠标左键、右键和键盘“1”键，应该会分别在屏幕上看到“Primary activated”、“Secondary activated”和“Tertiary activated”的打印信息，证明整个系统已成功扩展。
+
+
+
+\section{创建技能基类}
+本节字幕旨在解决之前课程中出现的代码重复问题。通过创建一个自定义的C++技能基类，可以将所有技能共享的通用逻辑和属性集中管理，从而优化项目结构，提高可维护性。
+
+\subsection{问题：重复的蓝图逻辑}
+\begin{itemize}
+    \item 在之前的课程中，我们创建了多个技能蓝图（\texttt{GA\_Primary}, \texttt{GA\_Secondary}等）。
+    \item 这些蓝图都包含了相似的逻辑，例如用于调试的\texttt{Print String}节点。
+    \item 如果需要修改这个调试逻辑（例如，增加一个开关来控制是否打印），就必须手动修改每一个技能蓝图，这非常低效且容易出错。
+\end{itemize}
+
+\subsection{解决方案：创建C++技能基类}
+为了解决上述问题，我们创建一个新的C++类 \texttt{UCCGameplayAbility}，它继承自虚幻引擎的 \texttt{UGameplayAbility}。这个新类将作为我们项目中所有技能蓝图的父类。
+\begin{itemize}
+    \item \textbf{代码复用}: 所有通用的功能（如调试信息打印）都可以在这个C++基类中实现一次。
+    \item \textbf{集中管理}: 通用的属性（如输入标签）可以在基类中定义，方便统一配置。
+    \item \textbf{蓝图友好}: 可以将C++属性和函数暴露给蓝图，让设计师可以在编辑器中方便地进行配置，而无需修改代码。
+\end{itemize}
+
+\subsection{C++ 实现步骤}
+\begin{enumerate}
+    \item \textbf{创建新C++类}:
+    \begin{itemize}
+        \item 在C++类向导中，创建一个名为 \texttt{UCCGameplayAbility} 的新类，并使其继承自 \texttt{UGameplayAbility}。
+    \end{itemize}
+    \item \textbf{设为抽象类 (Abstract)}:
+    \begin{itemize}
+        \item 在 \texttt{UCLASS} 宏中添加 \texttt{Abstract} 关键字。
+        \item 这可以防止设计师在编辑器中直接创建 \texttt{UCCGameplayAbility} 的蓝图实例，强制他们必须创建其子蓝图，确保了类的正确使用。
+    \end{itemize}
+    \begin{amzcode}{cpp}
+    UCLASS(Abstract)
+    class YOURPROJECT_API UCCGameplayAbility : public UGameplayAbility
+    \end{amzcode}
+    \item \textbf{添加通用属性}:
+    \begin{itemize}
+        \item 在 \texttt{UCCGameplayAbility.h} 中，添加一个新的 \texttt{FGameplayTag} 属性，专门用于存储与该技能关联的输入标签。
+    \end{itemize}
+    \begin{amzcode}{cpp}
+    UPROPERTY(EditDefaultsOnly, Category = "Input")
+    FGameplayTag StartupInputTag;
+    \end{amzcode}
+    \item \textbf{移除对旧接口的依赖}:
+    \begin{itemize}
+        \item 字幕中还提到了一个细节：由于现在所有的输入逻辑都在玩家控制器中处理，角色类不再需要实现之前创建的\texttt{ICombatInterface}接口来暴露ASC，因此可以将其移除，以简化代码。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{蓝图重设父类与配置}
+在C++代码完成后，需要在编辑器中更新现有的技能蓝图。
+\begin{enumerate}
+    \item \textbf{重设父类 (Reparent Blueprint)}:
+    \begin{itemize}
+        \item 打开每一个技能蓝图（\texttt{GA\_Primary}, \texttt{GA\_Secondary} 等）。
+        \item 在“类设置”中，将其“父类”从 \texttt{GameplayAbility} 修改为我们新创建的 \texttt{UCCGameplayAbility}。
+    \end{itemize}
+    \item \textbf{更新标签配置}:
+    \begin{itemize}
+        \item 重设父类后，在技能蓝图的“类默认值”中，会看到新的 \texttt{StartupInputTag} 属性。
+        \item \textbf{清理旧标签}: 从 \texttt{Ability Tags} 容器中移除之前添加的输入标签（如 \texttt{InputTag.Primary}）。
+        \item \textbf{设置新属性}: 为每个技能蓝图的 \texttt{StartupInputTag} 属性选择其对应的输入标签。
+    \end{itemize}
+    \item \textbf{移除重复的蓝图节点}:
+    \begin{itemize}
+        \item 删除每个技能蓝图事件图表中的 \texttt{Print String} 节点，因为这个功能未来将在C++基类中统一实现。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{总结}
+通过创建并使用一个自定义的技能基类，我们成功地重构了技能系统，消除了代码冗余，并为未来添加更多通用功能（如消耗、冷却、UI信息等）打下了坚实、可扩展的基础。
+
+\section{播放蒙太奇并等待}
+本节介绍了一个在游戏能力系统（GAS）中至关重要的概念：技能任务（Ability Tasks），并以最常用的任务之一——\texttt{Play Montage and Wait}为例，详细演示了如何在技能中播放动画。
+
+\subsection{技能任务 (Ability Task) 简介}
+\begin{itemize}
+    \item \textbf{本质}: 技能任务是可以在技能内部执行的异步操作。它们允许一个技能在等待某个事件（如动画播放完毕、延迟结束、玩家输入等）发生时保持激活状态，而不会阻塞游戏线程。
+    \item \textbf{异步性}: 当一个技能任务启动时，它会立即返回，但技能本身并不会结束。任务会在后台运行，并在完成或被中断时，通过其输出执行引脚来触发后续逻辑。
+    \item \textbf{关键作用}: 技能任务是实现复杂技能逻辑（如持续施法、多段攻击、等待动画同步等）的核心工具。
+\end{itemize}
+
+\subsection{详解 `Play Montage and Wait` 任务}
+这是GAS内置的一个强大的技能任务，专门用于播放动画蒙太奇（Animation Montage）。
+\begin{itemize}
+    \item \textbf{功能}: 它指示角色的动画实例播放一个指定的蒙太奇，并“等待”其结束。
+    \item \textbf{输出执行引脚}: 该任务节点有多个输出引脚，分别对应蒙太奇播放的不同结束状态：
+    \begin{itemize}
+        \item \textbf{\texttt{On Completed}}: 蒙太奇从头到尾正常播放完毕。
+        \item \textbf{\texttt{On Blend Out}}: 蒙太奇开始淡出。
+        \item \textbf{\texttt{On Interrupted}}: 蒙太奇被另一个更高优先级的蒙太奇打断。
+        \item \textbf{\texttt{On Cancelled}}: 拥有该任务的技能本身被取消，从而导致蒙太奇播放也被取消。
+    \end{itemize}
+    \item \textbf{正确的技能结束时机}: 必须在这些输出引脚之一被触发后，才调用\texttt{End Ability}节点来结束技能。如果在启动任务后立即结束技能，动画将不会播放，因为技能的生命周期已经结束。
+\end{itemize}
+
+\subsection{实现步骤}
+\begin{enumerate}
+    \item \textbf{创建动画蒙太奇 (Animation Montage)}:
+    \begin{itemize}
+        \item 在内容浏览器中，找到一个攻击动画序列（Animation Sequence）。
+        \item 右键点击该序列，选择“创建” -> “创建动画蒙太奇”。
+        \item 打开新创建的蒙太奇资源，可以在其中定义不同的片段（Sections），用于播放动画的不同部分。
+    \end{itemize}
+    \item \textbf{配置动画蓝图 (Animation Blueprint)}:
+    \begin{itemize}
+        \item 确保角色的动画蓝图的动画图表中有一个\texttt{Slot 'DefaultSlot'}节点。
+        \item 这个插槽节点是动画蒙太奇播放的“通道”。没有它，蒙太奇将无法播放。
+    \end{itemize}
+    \item \textbf{在技能蓝图中实现逻辑}:
+    \begin{itemize}
+        \item 打开主要攻击技能蓝图 \texttt{GA\_Primary}。
+        \item 在事件图表中，从\texttt{Event ActivateAbility}引脚拉出，搜索并创建\texttt{Play Montage and Wait}任务节点。
+        \item 将之前创建的攻击动画蒙太奇资源赋给该节点的\texttt{Montage to Play}属性。
+        \item 将该任务的所有输出执行引脚（\texttt{On Completed}, \texttt{On Interrupted}等）都连接到一个\texttt{End Ability}节点上。这确保了无论动画以何种方式结束，技能最终都会被正确地清理和终止。
+    \end{itemize}
+\end{enumerate}
+
+\subsection{总结}
+通过使用\texttt{Play Montage and Wait}技能任务，我们成功地将一个攻击动画与主要攻击技能绑定在了一起。这不仅实现了视觉表现，更重要的是，它引入了异步技能任务的概念，为构建更复杂、更具动态性的技能系统铺平了道路。现在，当玩家按下主要攻击键时，角色会播放攻击动画，并且技能会一直保持激活状态，直到动画播放完成或被中断。
 \end{document}
