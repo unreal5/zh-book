@@ -1,7 +1,7 @@
 \documentclass[10pt,CJKmath]{zhbook-v1}
 %\xeCJKsetup{CJKmath=true}
 \usepackage{fontawesome5}
-\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none,breakanywheresymbolpre=\rotatebox{-90}{\mbox{\tiny\faLevelDown*}}}
+\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none,breakanywheresymbolpre=\rotatebox{-90}{\mbox{\tiny\textcolor{pink}{\faLevelDown*}}}}
 \newcommand{\il}[1]{\mintinline{c++}{#1}}%
 
 \newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
@@ -14,6 +14,7 @@
     %\tableofcontents
 
 \mainmatter
+\pagestyle{fancy}
 \setchapterimage{./images/background}
 
 \chapter{ASC组件}
@@ -508,7 +509,7 @@ void FCCGameplayTags::InitializeNativeTags()
 \end{itemize}
 
 \subsection{解决方案：创建C++技能基类}
-为了解决上述问题，我们创建一个新的C++类 \texttt{UCCGameplayAbility}，它继承自虚幻引擎的 \texttt{UGameplayAbility}。这个新类将作为我们项目中所有技能蓝图的父类。
+为了解决上述问题，我们创建以\il{UGameplayAbility}为基类的C++类：\il{UCC_GameplayAbility}；这个新类将作为我们项目中所有技能蓝图的父类。
 \begin{itemize}
     \item \textbf{代码复用}: 所有通用的功能（如调试信息打印）都可以在这个C++基类中实现一次。
     \item \textbf{集中管理}: 通用的属性（如输入标签）可以在基类中定义，方便统一配置。
@@ -519,7 +520,7 @@ void FCCGameplayTags::InitializeNativeTags()
 \begin{enumerate}
     \item \textbf{创建新C++类}:
     \begin{itemize}
-        \item 在C++类向导中，创建一个名为 \texttt{UCCGameplayAbility} 的新类，并使其继承自 \texttt{UGameplayAbility}。
+        \item 创建一个继承自 \texttt{UGameplayAbility}的类\il{UCC_GameplayAbility}。
     \end{itemize}
     \item \textbf{设为抽象类 (Abstract)}:
     \begin{itemize}
@@ -528,7 +529,7 @@ void FCCGameplayTags::InitializeNativeTags()
     \end{itemize}
     \begin{amzcode}{cpp}
     UCLASS(Abstract)
-    class YOURPROJECT_API UCCGameplayAbility : public UGameplayAbility
+    class CRASHCOURSE_API UCCGameplayAbility : public UGameplayAbility
     \end{amzcode}
     \item \textbf{添加通用属性}:
     \begin{itemize}
@@ -572,12 +573,12 @@ void FCCGameplayTags::InitializeNativeTags()
 
 \subsection{技能任务 (Ability Task) 简介}
 \begin{itemize}
-    \item \textbf{本质}: 技能任务是可以在技能内部执行的异步操作。它们允许一个技能在等待某个事件（如动画播放完毕、延迟结束、玩家输入等）发生时保持激活状态，而不会阻塞游戏线程。
+    \item \textbf{本质}: 技能任务是可以在技能内部执行的\emph{异步}操作。它们允许一个技能在等待某个事件（如动画播放完毕、延迟结束、玩家输入等）发生时保持激活状态，而不会阻塞游戏线程。
     \item \textbf{异步性}: 当一个技能任务启动时，它会立即返回，但技能本身并不会结束。任务会在后台运行，并在完成或被中断时，通过其输出执行引脚来触发后续逻辑。
     \item \textbf{关键作用}: 技能任务是实现复杂技能逻辑（如持续施法、多段攻击、等待动画同步等）的核心工具。
 \end{itemize}
 
-\subsection{详解 `Play Montage and Wait` 任务}
+\subsection{详解 Play Montage and Wait 任务}
 这是GAS内置的一个强大的技能任务，专门用于播放动画蒙太奇（Animation Montage）。
 \begin{itemize}
     \item \textbf{功能}: 它指示角色的动画实例播放一个指定的蒙太奇，并“等待”其结束。
@@ -591,7 +592,8 @@ void FCCGameplayTags::InitializeNativeTags()
     \item \textbf{正确的技能结束时机}: 必须在这些输出引脚之一被触发后，才调用\texttt{End Ability}节点来结束技能。如果在启动任务后立即结束技能，动画将不会播放，因为技能的生命周期已经结束。
 \end{itemize}
 
-\subsection{实现步骤}
+\subsection{实现步骤(蓝图/C++)}
+\subsubsection{蓝图实现}
 \begin{enumerate}
     \item \textbf{创建动画蒙太奇 (Animation Montage)}:
     \begin{itemize}
@@ -612,7 +614,62 @@ void FCCGameplayTags::InitializeNativeTags()
         \item 将该任务的所有输出执行引脚（\texttt{On Completed}, \texttt{On Interrupted}等）都连接到一个\texttt{End Ability}节点上。这确保了无论动画以何种方式结束，技能最终都会被正确地清理和终止。
     \end{itemize}
 \end{enumerate}
+\subsubsection{C++代码实现}
+\begin{amzcode}{c++}
+void UCC_GameplayAbility::ActivateAbility(const FGameplayAbilitySpecHandle Handle,
+                                          const FGameplayAbilityActorInfo* ActorInfo,
+                                          const FGameplayAbilityActivationInfo ActivationInfo,
+                                          const FGameplayEventData* TriggerEventData)
+{
+	Super::ActivateAbility(Handle, ActorInfo, ActivationInfo, TriggerEventData);
 
+	if (!IsValid(AbilityMontage))
+	{
+		K2_EndAbility();
+		return;
+	}
+
+	if (!CommitAbility(Handle, ActorInfo, ActivationInfo))
+	{
+		// EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+		K2_EndAbility();
+		return;
+	}
+
+	// 在两个地方可以触发：1、服务端；2、客户端有预测键。
+	/* 预测键是由该Ability的Owner生成的，只有在客户端才会有预测键。 */
+	if (!HasAuthorityOrPredictionKey(ActorInfo, &ActivationInfo))
+	{
+		// EndAbility(Handle, ActorInfo, ActivationInfo, true, false);
+		K2_EndAbility();
+		return;
+	}
+	// 使用C++实现“PlayMontageAndWait”任务
+	// 工厂模式：创建，设置，激活。
+	auto MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, NAME_None, AbilityMontage);
+	if (!MontageTask)
+	{
+		K2_EndAbility();
+		return;
+	}
+	// 绑定委托
+	MontageTask->OnBlendOut.AddDynamic(this, &ThisClass::K2_EndAbility);
+	MontageTask->OnInterrupted.AddDynamic(this, &ThisClass::K2_EndAbility);
+	MontageTask->OnCancelled.AddDynamic(this, &ThisClass::K2_EndAbility);
+	MontageTask->OnCompleted.AddDynamic(this, &ThisClass::K2_EndAbility);
+	// 启动任务（Task完成准备工作）
+	MontageTask->ReadyForActivation();
+}
+\end{amzcode}
+\subsection{防止快速重新激活}
+如果希望技能在其功能完成前不可以再次激活，有两种办法：
+\begin{itemize}
+\item 将前述\dfntxt{Instancing Policy}改为：\il{Instanced Per Actor}；这样现在只有一个\il{Actor}实例，这样在默认的\il{Retrigger instance ability}设置为\il{false}的情况下，不会再次触发。
+\end{itemize}
 \subsection{总结}
 通过使用\texttt{Play Montage and Wait}技能任务，我们成功地将一个攻击动画与主要攻击技能绑定在了一起。这不仅实现了视觉表现，更重要的是，它引入了异步技能任务的概念，为构建更复杂、更具动态性的技能系统铺平了道路。现在，当玩家按下主要攻击键时，角色会播放攻击动画，并且技能会一直保持激活状态，直到动画播放完成或被中断。
+
+\setchapterimage{./images/j-20}
+\chapter{Gameplay Events}
+\dfntxt{Gameplay Event}允许我们向指定的\il{Actor}发送事件，\il{Actor}的\mybox{ASC}响应这个事件。
 \end{document}

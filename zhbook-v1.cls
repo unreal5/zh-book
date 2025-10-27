@@ -248,6 +248,7 @@
 \newcommand{\print@page}{第~\thepage~页，共~\pageref{LastPage}~页}
 
 \pagestyle{fancy}
+\renewcommand{\headrulewidth}{0pt}
 \lhead{\footnotesize\nouppercase{\leftmark}}
 \rhead{\footnotesize\nouppercase{\rightmark}}
 \cfoot{\print@page}
