@@ -5,7 +5,7 @@
 \newcommand{\il}[1]{\mintinline{c++}{#1}}%
 
 \newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
- arc=4pt,outer arc=4pt,colback=red!10!white,colframe=#1!50!black,
+ arc=4pt,outer arc=4pt,colback=yellow!10!white,colframe=#1!50!black,
  boxsep=0pt,left=2pt,right=2pt,top=2pt,bottom=2pt,
  boxrule=1pt,leftrule=1pt,rightrule=1pt}
  
@@ -569,7 +569,7 @@ void FCCGameplayTags::InitializeNativeTags()
 通过创建并使用一个自定义的技能基类，我们成功地重构了技能系统，消除了代码冗余，并为未来添加更多通用功能（如消耗、冷却、UI信息等）打下了坚实、可扩展的基础。
 
 \section{播放蒙太奇并等待}
-本节介绍了一个在游戏能力系统（GAS）中至关重要的概念：技能任务（Ability Tasks），并以最常用的任务之一——\texttt{Play Montage and Wait}为例，详细演示了如何在技能中播放动画。
+本节介绍了一个在游戏技能系统（GAS）中至关重要的概念：技能任务（Ability Tasks），并以最常用的任务之一——\texttt{Play Montage and Wait}为例，详细演示了如何在技能中播放动画。
 
 \subsection{技能任务 (Ability Task) 简介}
 \begin{itemize}
@@ -672,4 +672,130 @@ void UCC_GameplayAbility::ActivateAbility(const FGameplayAbilitySpecHandle Handl
 \setchapterimage{./images/j-20}
 \chapter{Gameplay Events}
 \dfntxt{Gameplay Event}允许我们向指定的\il{Actor}发送事件，\il{Actor}的\mybox{ASC}响应这个事件。
+
+\section{自定义 Ability System Component}
+
+\subsection{目标}
+本节旨在说明如何创建并在项目中接入一个自定义的 Ability System Component（简称 ASC），使敌人能够通过 Gameplay Ability 监听并响应命中事件（例如玩家的 hitbox 与敌人重叠），从而处理事件载荷（payload）、触发伤害或其他反应逻辑。
+
+\subsection{设计思路}
+利用 Gameplay Abilities 的事件监听机制：在敌人上激活一个能够监听特定事件的技能（\dfntxt{Ability}），当收到包含必要数据的事件载荷时，该技能解析并执行相应的行为。为了自动在赋予时激活某些技能，需要在 AbilitySystem 的创建/赋予流程中加入自定义逻辑，因此创建一个派生自 UAbilitySystemComponent 的自定义组件是合理且必要的。
+
+\subsection{实现步骤}
+\begin{enumerate}
+\item 在项目的 AbilitySystem 目录下新建以\il{UAbilitySystemComponent}为基类，名为 \il{UCC_AbilitySystemComponent}的类。
+\item 清理类文件结构（可选但推荐）：
+\begin{itemize}
+\item 将 \texttt{TickComponent} 等常用函数移动到头文件顶部的 public 段；
+\item 合并或删除重复的 public 段落，去掉自动生成的长期注释，使头文件更简洁。
+\end{itemize}
+\item 在需要使用 AbilitySystemComponent 的类中替换默认实现：
+\begin{itemize}
+\item 将包含头文件从 \texttt{AbilitySystemComponent.h} 替换为自定义组件的头文件，如 \il{CCAbilitySystemComponent.h}；
+\item 在构造函数中调用 \il{CreateDefaultSubObject} 时，将模板类型由 \il{UAbilitySystemComponent} 改为 \texttt{UCCAbilitySystemComponent}；成员变量的声明类型可以保持不变（例如仍声明为指向基类的指针），无需修改。
+\end{itemize}
+示例（伪代码）：
+\begin{amzcode}{c++}
+// 替换前
+AbilitySystem = CreateDefaultSubobject<UAbilitySystemComponent>(TEXT("AbilitySystem"));
+
+
+// 替换后AbilitySystem = CreateDefaultSubobject<UCCAbilitySystemComponent>(TEXT("AbilitySystem"));
+\end{amzcode}
+\item 在玩家相关类（例如 \texttt{CCPlayerState}）和敌人类（例如 \texttt{CCEnemyCharacter}）中都进行上述替换，确保运行时这两个角色使用的是自定义的 ASC 实现。
+\item 编译并验证：关闭编辑器（如果正在运行），在 IDE/编辑器中进行构建，确认没有编译错误并能成功链接。
+\end{enumerate}
+
+\subsection{注意事项}
+\begin{itemize}
+\item 不需要更改成员变量的声明类型：保持使用基类指针能利用多态性，唯一需要改动的是用于创建子对象的模板类型与 include 头文件。
+\item 自定义 ASC 的主要用处是可以在组件层面实现“当赋予带特定 Tag 的技能时自动激活该技能”之类的通用行为，从而把跨角色的事件响应逻辑集中管理。
+\item 在头文件中保持清晰的可见性分组（例如只保留一个 public 段），有助于可读性与后续维护。
+\item 在进行大量替换后，务必做一次完整编译以捕获遗漏的 include 或类型不匹配问题。
+\end{itemize}
+
+\subsection{后续工作与验证}
+\begin{itemize}
+\item 在自定义的 \texttt{UCCAbilitySystemComponent} 中实现具体的自动激活逻辑，例如：当技能被赋予且技能带有特定 Tag 时立即激活，或根据事件类型条件性激活监听技能。
+\item 实现事件 payload 的格式与解析规则（例如包含伤害数值、命中点、命中方向等），并在 Ability 中处理这些数据以触发受击、受伤或击杀流程。
+\item 为新实现编写简单的单元/集成测试（若项目支持），并在编辑器中进行运行时验证（例如在场景中触发玩家攻击并观察敌人的技能激活与反应）。
+\end{itemize}
+
+\subsection{结论}
+通过创建并接入一个自定义的 Ability System Component，可以在组件层集中管理技能赋予/激活时的自定义行为，从而方便地实现敌人在接收到命中事件时的自动响应机制。完成包含头文件替换与 CreateDefaultSubObject 模板类型替换后，下一步是向自定义组件中填充事件监听与技能自动激活的具体实现，并进行编译与运行时验证。
+
+
+
+\section{自动激活技能}
+
+\subsection{目标与动机}
+本节讲解如何让技能在被赋予时自动激活，从而让角色（尤其是敌人）在需要时立刻进入监听或响应状态。这样可以在赋予 Ability 的瞬间让它开始接收事件（例如来自玩家的命中事件），无需额外的手动激活调用，简化运行时逻辑并增强组件层面的可控性。
+
+\subsection{总体思路}
+
+在自定义的 Ability System Component（ASC）中拦截技能被赋予的时机。
+检查被赋予的技能是否满足自动激活条件（例如技能带有某个 Tag）。
+对满足条件的技能在赋予时立即触发激活流程（ActivateAbility），或者以合适的优先级将技能置为激活状态以开始监听事件。
+将技能的自动激活条件抽象为可配置项（Tag、Ability 类型、或其它元数据），以便在不同角色或不同技能组合中复用同一套规则。
+\subsection{实现步骤（详尽）}
+\begin{enumerate}
+\item 在自定义的 ASC（\il{UCC_AbilitySystemComponent}）中覆盖并扩展处理“技能被赋予”或“技能新增”（grant/given）相关的回调或钩子函数。该钩子通常在底层 Ability System 在赋予 GameplayAbility 时被触发。
+\item 在该钩子内部，提取被赋予技能的描述信息（例如 Ability Spec、Ability Class、Ability 的 Tag 列表等）。
+\item 设计并实现判定逻辑以决定是否需要自动激活：
+\begin{itemize}
+\item 简单方式：如果 Ability 的 Tag 包含特定字符串（例如 \texttt{AutoActivate}、\texttt{AutoStart} 等），则激活。
+\item 规则驱动方式：在 ASC 中维护一张规则表（Tag 模式、技能类白名单/黑名单、上下文条件），按规则判断是否激活。
+\item 角色级别覆盖：允许角色或拥有者在创建组件或赋予技能时传入配置，覆盖默认规则。
+\end{itemize}
+\item 对满足条件的 Ability，调用技能激活接口（例如 \texttt{GiveAbility} 后立刻调用 \texttt{TryActivateAbility} 或通过 Ability Spec 标记为已激活状态），确保技能开始接收事件输入与执行逻辑。
+\item 处理激活失败或冲突：如果某些技能依赖资源（Cooldown、Cost）或被其他技能阻塞，应在 ASC 中优雅处理激活失败（记录日志、重试策略或回滚赋予），并保证不会破坏技能系统的一致性。
+\item 测试与验证：在编辑器中反复测试不同场景下的自动激活行为（玩家赋予、敌人生成、网络复制等），确保在服务器-客户端架构下状态一致且没有竞态条件。
+\end{enumerate}
+
+\subsection{代码要点与示例思路（伪实现）}
+\begin{itemize}
+\item 覆盖赋予回调：
+\begin{itemize}
+\item 在 ASC 中实现类似於 \il{OnAbilityGiven(const FGameplayAbilitySpec& Spec)} 的方法，或在赋予流程末尾插入检查与激活逻辑。
+\end{itemize}
+\item 判定标签：
+\begin{amzcode}{c++}
+if (Spec.Ability->HasMatchingGameplayTag(AutoActivateTag))
+{
+	TryActivateAbility(Spec.Handle);
+}
+\end{amzcode}
+\item 支持配置化规则：将 AutoActivateTag、白名单/黑名单作为 ASC 的成员变量或配置资源，便于调试与迭代。
+\item 异常与并发：在多线程或网络复制环境下，确保激活尝试在权限正确的执行权（通常服务器）上进行，并在客户端呈现时采用预测或回滚策略。
+\end{itemize}
+\begin{genbox}{注意}
+文中提及另一个\il{GiveAbilityAndActivateOnce}，要看注释。这个函数激活并移除技能。所以如果使用\il{GiveAbilityAndActivateOnce}，当技能结束后，需要再次激活，必须再次给予（give）。
+\end{genbox}
+\subsection{设计注意事项与边界情形}
+\begin{enumerate}
+\item 成员声明与创建的分离：如前所述，不必更改成员变量的静态类型；只需在创建子对象时使用自定义 ASC 类型即可获得定制行为。
+\item 资源约束：自动激活技能可能需要消耗资源（如能量或触发冷却），因此判定逻辑中应考虑当前资源状态，或允许技能在激活时执行失败处理流程。
+\item 激活顺序与优先级：当多项技能同时被赋予并自动激活时，设计优先级规则以避免冲突（例如先激活监听类技能，再激活执行类技能）。
+\item 网络同步：在网络游戏中，建议把自动激活逻辑放在服务器侧执行，并通过技能状态的复制使客户端保持一致；客户端可以做预测显示，但最终由服务器权威决定激活结果。
+\item 可测试性：为判定逻辑与激活触发编写单元测试或集成测试（若项目支持），用不同的 Tag、资源状态与并发场景覆盖边界条件。
+\end{enumerate}
+
+\subsection{验证步骤与运行时检查}
+\begin{itemize}
+\item 在本地构建并运行：在关闭编辑器后进行全量编译以捕获头文件替换或接口不匹配的编译期错误。
+\item 运行场景测试：在场景中生成带有自动激活技能的敌人或玩家，触发赋予流程并观察技能是否在赋予后立即进入监听/激活状态。
+\item 日志与断言：在 ASC 的自动激活分支中添加详细日志与必要的断言（仅在调试构建），便于快速定位为何某个技能未被激活或激活失败的原因。
+\item 网络测试：在服务器-客户端多实例下测试，确认触发只在服务器端执行且激活状态正确同步到客户端。
+\end{itemize}
+
+\subsection{后续扩展建议}
+\begin{itemize}
+\item 将自动激活规则扩展为数据表或配置文件（例如 CSV/DataTable 或 JSON），便于设计师在不改动代码的情况下调整规则。
+\item 在 Ability Spec 中增加元数据字段（例如 AutoActivatePriority、AutoActivateConditions），使技能本身携带激活策略。
+\item 为自动激活技能添加生命周期钩子（OnAutoActivated、OnAutoActivationFailed），便于在激活时执行附加逻辑（播放特效、触发音效、统计数据上报等）。
+\item 编写自动化测试用例覆盖常见场景：资源不足、冷却中、依赖技能未准备好、网络延迟导致的激活冲突等。
+\end{itemize}
+
+\subsection{结论}
+通过在自定义的 Ability System Component 中实现“赋予即激活”的逻辑，并以 Tag 或可配置规则驱动激活判定，可以简化技能的使用模式，使敌人或其他角色在赋予技能后立即开始响应事件（例如玩家命中）。关键成功要素包括清晰的规则设计、对资源与优先级的恰当处理，以及在网络环境下以服务器为权威的稳健同步策略。
 \end{document}
