@@ -156,10 +156,10 @@ Event BeginPlay
     \node[block, below=of cast] (subsys) {Get Local Player Subsystem (Enhanced Input)};
     \node[block, below=of subsys] (add) {Add Mapping Context\newline(\il{IMC_Default}, Priority=0)};
 
-    \draw[arrow] (begin) -- (getc);
-    \draw[arrow] (getc) -- (cast);
-    \draw[arrow] (cast) -- (subsys);
-    \draw[arrow] (subsys) -- (add);
+    \draw[arrow] (begin) -\item(getc);
+    \draw[arrow] (getc) -\item(cast);
+    \draw[arrow] (cast) -\item(subsys);
+    \draw[arrow] (subsys) -\item(add);
   \end{tikzpicture}
   \end{center}
 
@@ -185,9 +185,9 @@ OnInputAction(IA_Look)  // triggered with Axis2D value (X, Y)
     \node[small, below left=of break] (yaw) {AddControllerYawInput};
     \node[small, below right=of break] (pitch) {AddControllerPitchInput};
 
-    \draw[arrow] (event) -- (break);
-    \draw[arrow] (break) -- (yaw) node[midway, left] {X};
-    \draw[arrow] (break) -- (pitch) node[midway, right] {Y};
+    \draw[arrow] (event) -\item(break);
+    \draw[arrow] (break) -\item(yaw) node[midway, left] {X};
+    \draw[arrow] (break) -\item(pitch) node[midway, right] {Y};
   \end{tikzpicture}
   \end{center}
 
@@ -373,9 +373,9 @@ OnInputAction(IAMove)  // Axis2D: (X, Y)
   \node[block, below=of select] (anim) {Add Animation Sequence (unarmed\_idle\_ready) to Anim Graph};
   \node[block, below=of anim] (preview) {Compile \& Preview in Anim Blueprint Viewport};
 
-  \draw[arrow] (new) -- (select);
-  \draw[arrow] (select) -- (anim);
-  \draw[arrow] (anim) -- (preview);
+  \draw[arrow] (new) -\item(select);
+  \draw[arrow] (select) -\item(anim);
+  \draw[arrow] (anim) -\item(preview);
 \end{tikzpicture}
 \end{center}
 
@@ -390,10 +390,10 @@ OnInputAction(IAMove)  // Axis2D: (X, Y)
   \node[proc, below=of assign] (save) {Compile \& Save};
   \node[proc, below=of save] (play) {Play Scene \& Verify Idle Animation};
 
-  \draw[arrow] (open) -- (selectmesh);
-  \draw[arrow] (selectmesh) -- (assign);
-  \draw[arrow] (assign) -- (save);
-  \draw[arrow] (save) -- (play);
+  \draw[arrow] (open) -\item(selectmesh);
+  \draw[arrow] (selectmesh) -\item(assign);
+  \draw[arrow] (assign) -\item(save);
+  \draw[arrow] (save) -\item(play);
 \end{tikzpicture}
 \end{center}
 
@@ -461,10 +461,10 @@ OnInputAction(IAMove)  // Axis2D: (X, Y)
   \node[block, below=of idleasm] (stance) {State Machine: \il{idleStance}};
   \node[proc, below=of stance] (seq) {Sequence Player (dynamic) \newline variable: \il{idleAny}};
 
-  \draw[arrow] (loc) -- (idle);
-  \draw[arrow] (idle) -- (idleasm);
-  \draw[arrow] (idleasm) -- (stance);
-  \draw[arrow] (stance) -- (seq);
+  \draw[arrow] (loc) -\item(idle);
+  \draw[arrow] (idle) -\item(idleasm);
+  \draw[arrow] (idleasm) -\item(stance);
+  \draw[arrow] (stance) -\item(seq);
 \end{tikzpicture}
 \end{center}
 
@@ -525,8 +525,8 @@ OnInputAction(IAMove)  // Axis2D: (X, Y)
   \node[box, right=of dt, font=\footnotesize] (comp) {Actor Component: \il{BPC_Locomotion} \\\\ BeginPlay / init};
   \node[box, right=of comp,font=\footnotesize] (abp) {Animation Blueprint: \il{ABP_Locomotion} \\\\ variable: \il{idleAny}};
 
-  \draw[arrow] (dt) -- node[above,font=\footnotesize]{Read row by key} (comp);
-  \draw[arrow] (comp) -- node[above,font=\footnotesize]{Inject / Set variable} (abp);
+  \draw[arrow] (dt) --node[above,font=\footnotesize]{Read row by key} (comp);
+  \draw[arrow] (comp) --node[above,font=\footnotesize]{Inject / Set variable} (abp);
 \end{tikzpicture}
 \end{center}
 
@@ -589,8 +589,8 @@ OnInputAction(IAMove)  // Axis2D: (X, Y)
   \node[proc, right=of dt] (comp) {Component: \il{BPC_Locomotion} \\\ GetAnimSet / BeginPlay};
   \node[block, right=of comp] (abp) {Anim Blueprint: \il{ABP_Locomotion} \\\ variable: \il{idleAny} / ApplyAnimSet()};
 
-  \draw[arrow] (dt) -- node[above]{Get Data Table Row} (comp);
-  \draw[arrow] (comp) -- node[above]{Cast AnimInstance / Call API} (abp);
+  \draw[arrow] (dt) --node[above]{Get Data Table Row} (comp);
+  \draw[arrow] (comp) --node[above]{Cast AnimInstance / Call API} (abp);
 \end{tikzpicture}
 \end{center}
 
@@ -604,4 +604,112 @@ OnInputAction(IAMove)  // Axis2D: (X, Y)
 
 \bigskip
 \noindent 小结：本节实现了从数据表读取 AnimSet 并在运行时注入到动画蓝图的流程，提供了可复用、可配置的数据驱动路线。
+
+\chapter{Idle,Idle Breaks,Cardinal Movements and Turn in Place}
+\section{Orientation Warping}
+
+
+下面给出 Orientation Warping（方向扭曲）在 UE5 中的原理与使用要点，并结合现有的动画实例代码给出接线和变量更新方式。
+
+原理概述
+\begin{itemize}
+
+\item 目标：用一条“面向前进”的循环步行动画，适配任意移动方向（如斜向或横移），从而\textbf{减少}左右/后退循环动画的需求。
+\item 方法：基于“角色前向”和“移动方向”的偏航角，将旋转分布到骨盆与脊柱链上进行扭转；同时\textbf{对双脚 IK 进行反向校正}，使脚掌朝向和着地不被错误扭转。
+\item 优点：让单一前进动画在较大角度范围内看起来仍然朝着移动方向在行走/跑动，常与 Stride Warping、足部 IK/Foot Lock 组合。
+\end{itemize}
+启用与前置条件
+\begin{itemize}
+\item 启用插件：Plugins -> Animation -> 勾选\mybox{Animation Warping}。 Animation Warping插件支持\il{Stride}、\il{Orientation}和\il{Slope}扭曲（warping），要求启用\emph{RootMotion}。
+\item 骨架要求：有足部 IK 骨（常见为 \il{ik_foot_root}、\il{ik_foot_l}、\il{ik_foot_r}），以及明确定义的脊柱骨链（如 pelvis/spine\_01/spine\_02/spine\_03）。
+\item 输入角度：提供“移动方向相对前向的偏航角”$\in[-180°, 180°]$，通常由 \il{UKismetAnimationLibrary::CalculateDirection} 计算。
+\end{itemize}
+节点关键参数（常见）
+\begin{itemize}
+\item Locomotion Angle（float）：偏航角（度）。来源于速度与朝向的夹角。
+\item Enable/Alpha：启用强度。速度过小或非落地可降为 0。
+\item Spine Bones/Distribution：脊柱骨链与旋转分配比例。
+\item Yaw Rotation Axis：绕哪个轴进行扭转（一般为 Z 轴）。
+\item IK Foot Root / Left/Right Foot IK：指定足 IK 骨，防止脚被错误扭转。
+\item Max Warp Angle/Clamp：实际应用的最大扭转角，避免过大角度导致形变不自然（常在 $60°\textasciitilde 90°$ 内）。
+\end{itemize}
+在 AnimGraph 的典型接线顺序
+\begin{itemize}
+\item 基础姿态（State Machine 的 Locomotion 输出）
+\item Orientation Warping（输入偏航角、脊柱骨、IK 足骨）
+\item Stride Warping（可选）
+\item 足部 IK/Foot Lock 或 FullBodyIK（可选）
+\item Output Pose
+\item 提示：Turn In Place/转身在原地的逻辑通常在角度过大或速度很小的时候接管，而不是继续 Orientation Warping。
+\end{itemize}
+与当前代码的集成
+\begin{itemize}
+\item 在 UAnimInstance 中用 CalculateDirection 得到 LocalVelocityDirectionAngle。将其夹角、启用条件暴露给 AnimGraph 上的 Orientation Warping 节点即可。
+\end{itemize}
+简述：下面代码在 ULSBaseAnimInstance 中增加可供蓝图绑定的变量，用移动速度与是否贴地来控制启用，并限制最大扭转角，避免形变不自然。
+
+\begin{amzcode}{c++}
+#include "LSBaseAnimInstance.h"
+#include "KismetAnimationLibrary.h"
+#include "GameFramework/CharacterMovementComponent.h"
+
+void ULSBaseAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
+{
+    Super::NativeThreadSafeUpdateAnimation(DeltaSeconds);
+
+    UpdateLocationData();
+    UpdateRotationData();
+    UpdateVelocityData();
+
+    // --\item Orientation Warping 驱动变量 ---
+    // 基于已有 LocalVelocityDirectionAngle（[-180, 180]）
+    const float Speed2D = WorldVelocity2D.Size();
+    const bool bOnGround = OwnerMovementComp.IsValid() ? OwnerMovementComp->IsMovingOnGround() : false;
+
+    // 可调：速度阈值与最大扭转角
+    constexpr float MinEnableSpeed = 10.f;     // 小于该速度则关闭扭曲
+    constexpr float MaxWarpAngle   = 80.f;     // 限制最大扭转角，避免形变
+
+    // 是否启用
+    bOWEnabled = (Speed2D > MinEnableSpeed) && bOnGround;
+
+    // 输入给节点的偏航角（度），做角度夹取
+    OWWarpAngle = FMath::Clamp(LocalVelocityDirectionAngle, -MaxWarpAngle, MaxWarpAngle);
+
+    // 可选：依据速度或曲线调节 Alpha
+    // 例如线性映射在 [MinEnableSpeed, 300] 到 [0.3, 1.0]
+    const float AlphaMinSpeed = 120.f;
+    const float AlphaMaxSpeed = 300.f;
+    const float RawAlpha = FMath::GetMappedRangeValueClamped(
+        FVector2D(AlphaMinSpeed, AlphaMaxSpeed),
+        FVector2D(0.3f, 1.0f),
+        Speed2D
+    );
+    OWWarpAlpha = bOWEnabled ? RawAlpha : 0.f;
+}
+\end{amzcode}
+
+在动画蓝图中绑定
+\begin{itemize}
+\item 在 AnimGraph 放置 Orientation Warping 节点：
+  \item 将 Locomotion Angle 绑定到 OWWarpAngle。
+  \item 将 Alpha/Enable 绑定到 OWWarpAlpha 或 bOWEnabled。
+  \item 指定 IK Foot Root、Left/Right Foot IK 为你骨骼中对应的 IK 骨。
+  \item 指定 Spine Bones 列表及分布（例如 pelvis、spin\_01、spine\_02、spine\_03，从下到上分配 0.35/0.25/0.25/0.15，可按效果微调）。
+  \item 扭转轴一般选 Z（Yaw）。
+\item 将其放在 Locomotion 状态机输出之后、足部 IK 之前。
+\item 角度过大或速度过小（站立/Idle）时，可用状态机切换到 Turn In Place 或 Idle，不再给 Orientation Warping 角度。
+\end{itemize}
+常见问题与建议
+\begin{itemize}
+\item 超过 90° 的大角度会明显拉扯胸腔或夹胯，建议配合转身动画或限制最大角度。
+\item 确保脚 IK 骨正确，否则脚掌会被扭偏。
+\item 骨架前向轴与节点的扭转轴要匹配；若模型前向非 X 轴，需在节点/骨骼设置中对应调整。
+\item 与 Aim Offset 同用时，通常先做 Orientation Warping 再做瞄准，以减少互相“打架”。
+\end{itemize}
+文件关联(待实现)
+\begin{itemize}
+\item 变量更新：'Source/LocomotionSystem/AnimInst/LSBaseAnimInstance.cpp'
+\item 变量声明：'Source/LocomotionSystem/AnimInst/LSBaseAnimInstance.h'（如 float OWWarpAngle; float OWWarpAlpha; bool bOWEnabled; 并标记 BlueprintReadOnly 以供 AnimGraph 绑定）
+\end{itemize}
 \end{document}

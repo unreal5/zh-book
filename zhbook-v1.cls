@@ -181,10 +181,10 @@
                 sharp corners,
                 colback=amzchaptercolor,
                 colframe=amzchaptercolor,
-                boxrule=1mm,
+                boxrule=0pt,
                 % 使用预计算的不透明度参数
                 opacityfill=\chap@opacityfill,
-                interior style={left color=amzchaptercolor,right color=white},
+                interior style={left color=amzchaptercolor,right color=amzchaptercolor!30!white},
                 title=\Chap@Num\thechapter,
                 attach boxed title to top right={xshift=-15mm, yshift=-4mm},
                 boxed title style={
