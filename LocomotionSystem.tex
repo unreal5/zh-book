@@ -712,4 +712,17 @@ void ULSBaseAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 \item 变量更新：'Source/LocomotionSystem/AnimInst/LSBaseAnimInstance.cpp'
 \item 变量声明：'Source/LocomotionSystem/AnimInst/LSBaseAnimInstance.h'（如 float OWWarpAngle; float OWWarpAlpha; bool bOWEnabled; 并标记 BlueprintReadOnly 以供 AnimGraph 绑定）
 \end{itemize}
+
+\section{原地转身}
+原地转身需要启用\textbf{RootMotion}，其\il{Force Root Lock}含义：
+\begin{itemize}
+\item 启用后，会把根骨骼（Bone 0）的平移锁定在指定锚点上（由“Root Motion Root Lock”决定：零点/参考姿势/动画第1帧），使根骨在播放过程中不产生可见平移。
+\item 根骨的实际位移不会丢失，而是作为Root Motion被提取与应用，防止网格“跟着根骨滑走”。
+\end{itemize}
+用途与建议：
+\begin{itemize}
+\item 适合“原地循环/原地转身”等需要网格不移动的动画，避免细微漂移。
+\item 若希望预览时看见网格随根骨位移，或不使用Root Motion，可关闭。
+\item 配合“Root Motion Root Lock”一起使用，选择锁定到零点、参考姿势或动画首帧。
+\end{itemize}
 \end{document}
