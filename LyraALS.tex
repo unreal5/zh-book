@@ -1,0 +1,34 @@
+\documentclass[10pt,CJKmath]{zhbook-v1}
+%\xeCJKsetup{CJKmath=true}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,shapes.geometric,positioning,shadows,fit,backgrounds}
+% Global TikZ styles for consistent, polished diagrams
+\tikzset{
+  base/.style={font=\small, align=center,inner sep=2pt,outer sep=0mm},
+  block/.style={rectangle, draw=black!60, rounded corners, minimum width=20mm, minimum height=8mm, align=center, fill=teal!6, drop shadow, base},
+  proc/.style={rectangle, draw=black!60, minimum width=38mm, minimum height=8mm, align=center, fill=orange!6, drop shadow, base},
+  box/.style={rectangle, draw=black!45, rounded corners, minimum width=40mm, minimum height=8mm, align=center, fill=gray!6, base},
+  arrow/.style={-{Latex[length=3mm]}, very thick, line cap=round, color=black!70}
+}
+
+\usepackage{fontawesome5}
+\setmintedinline[c++]{breaklines,breakanywhere,bgcolor=none,breakanywheresymbolpre=\rotatebox{-90}{\mbox{\tiny\textcolor{pink}{\faLevelDown*}}}}
+\newcommand{\il}[1]{\mintinline{c++}{#1}}%
+
+\newtcbox{\mybox}[1][red]{on line,colupper=black,fonttitle=\bfseries,
+ arc=4pt,outer arc=4pt,colback=yellow!10!white,colframe=#1!50!black,
+ boxsep=0pt,left=2pt,right=2pt,top=1pt,bottom=1pt,
+ boxrule=1pt,leftrule=1pt,rightrule=1pt}
+ 
+ 
+\begin{document}
+		%\frontmatter
+    %\tableofcontents
+
+\mainmatter
+\pagestyle{fancy}
+\setchapterimage{./images/background}
+
+\chapter{启始}
+
+\end{document}
