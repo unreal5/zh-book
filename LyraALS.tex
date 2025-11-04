@@ -30,5 +30,243 @@
 \setchapterimage{./images/background}
 
 \chapter{启始}
+\section{NativeThreadSafeUpdateAnimation VS FAnimInstanceProxy}
+对于需要大量计算的动画实例，并希望利用多线程进行求值，推荐使用 \il{FAnimInstanceProxy}。
 
+这两者并非完全互斥的选项，\il{FAnimInstanceProxy} 是实现动画多线程更新的底层结构和推荐模式，而 \il{NativeThreadSafeUpdateAnimation} 是一个更上层的、简化的接口。
+
+\begin{itemize}
+	\item 重载 \il{NativeThreadSafeUpdateAnimation}：这是一种更简单直接的方法，适用于逻辑不那么复杂的场景。
+			\begin{itemize}
+			\item 优点:
+			    \begin{itemize}
+			    	\item 简单: 只需在 UAnimInstance 子类中重载一个函数，无需创建和管理额外的代理（Proxy）结构体。
+			    	\item 快速实现: 对于简单的属性复制和计算，这种方式的代码量更少，更容易理解。
+			    \end{itemize}
+			
+			\item 缺点:
+				\begin{itemize}
+						\item 功能限制: 它\textbf{本质}上是 \il{FAnimInstanceProxy::Update} 的一个简化包装。所有数据\dfntxt{必须是线程安全}的，并且必须在 NativeUpdateAnimation（游戏线程）中提前准备好，然后在这个函数（工作线程）中使用。
+						\item 扩展性差: 随着计算逻辑变得越来越复杂（例如，需要缓存中间结果、跨帧数据等），只使用这个函数会变得混乱。所有逻辑和数据都挤在 UAnimInstance 类中，不符合关注点分离原则。
+				\end{itemize}
+			\end{itemize}
+	\item  使用 \il{FAnimInstanceProxy}：这是UE官方推荐的、更健壮和可扩展的多线程动画更新模式。
+
+	\begin{itemize}
+		\item 	优点:
+			\begin{itemize}
+			\item 结构清晰: 强制将数据和逻辑分离。UAnimInstance 负责从游戏世界（Game Thread）收集数据，\il{FAnimInstanceProxy} 负责在工作线程（Worker Thread）上使用这些数据进行计算。
+	    \item 性能更佳: 代理（Proxy）是一个普通的C++结构体（struct），比 UObject 更轻量。在工作线程上传递和操作代理的开销更小。
+	    \item 扩展性强: 面对“未来会有大量的求值计算”，\il{FAnimInstanceProxy} 提供了清晰的扩展路径。你可以：
+			\item 在 FAnimInstanceProxy::PreUpdate (Game Thread) 中高效地从 UAnimInstance 拷贝数据。
+	    \item 在 FAnimInstanceProxy::Update (Worker Thread) 中执行所有复杂的计算。
+	    \item 在 FAnimInstanceProxy::PostUpdate (Game Thread) 中将计算结果写回 UAnimInstance（如果需要）。
+	    \item 更安全: 这种模式强制你思考线程安全问题，将游戏线程的访问和工作线程的计算明确分开，减少了多线程编程中常见的错误。
+			\end{itemize}
+	
+		\item  缺点:	    更复杂: 需要额外定义一个 \il{FAnimInstanceProxy} 结构体，并重载 CreateProxy 和 DestroyProxy 函数。初始设置的代码量比仅重载 \il{NativeThreadSafeUpdateAnimation} 要多。
+	\end{itemize}
+\end{itemize}
+
+\subsection{示例}
+这是一个基于 ULyraBaseAnimInstance 的简洁示例，展示了如何实现 FAnimInstanceProxy 模式。这个例子遵循了UE官方推荐的最佳实践。
+
+我们将为 ULyraBaseAnimInstance 创建一个代理 FLyraBaseAnimInstanceProxy，并在其中执行多线程计算。
+
+\subsubsection{头文件 (LyraBaseAnimInstance.h)}
+
+在头文件中，我们需要：
+\begin{enumerate}
+\item 声明代理结构体 FLyraBaseAnimInstanceProxy。
+\item  在 ULyraBaseAnimInstance 中重载 CreateProxy 和 DestroyProxy。
+\item  添加一些我们希望在工作线程中计算的属性，例如 GroundSpeed。
+\item  定义 FLyraBaseAnimInstanceProxy 结构体，它继承自 FAnimInstanceProxy，并包含用于计算的成员变量和函数。
+\end{enumerate}
+
+\begin{amzcode}{c++}
+// LyraBaseAnimInstance.h
+
+#pragma once
+
+#include "CoreMinimal.h"
+#include "Animation/AnimInstance.h"
+#include "Animation/AnimInstanceProxy.h" // 必须包含代理头文件
+#include "LyraBaseAnimInstance.generated.h"
+
+class ALyraCharacter;
+class UCharacterMovementComponent;
+
+// 1. 定义代理结构体，它将包含所有线程安全的数据和求值逻辑
+USTRUCT()
+struct FLyraBaseAnimInstanceProxy : public FAnimInstanceProxy
+{
+	GENERATED_BODY()
+
+public:
+	// 使用AnimInstance来初始化代理
+	FLyraBaseAnimInstanceProxy(UAnimInstance* Instance);
+
+	// 在工作线程上执行的更新函数，所有耗时计算都在这里
+	virtual void Update(float DeltaSeconds) override;
+
+	// 在游戏线程上，从AnimInstance拷贝数据到Proxy中
+	virtual void PreUpdate(UAnimInstance* InAnimInstance, float DeltaSeconds) override;
+
+public:
+	// 在工作线程上计算出的最终值
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Lyra|Proxy Data")
+	float GroundSpeed = 0.0f;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Lyra|Proxy Data")
+	bool bIsFalling = false;
+
+protected:
+	// 从游戏线程拷贝过来的原始数据
+	FVector CharacterVelocity;
+	// ... 其他需要从游戏线程拷贝的数据
+};
+
+
+UCLASS(Abstract)
+class LYRAALS_API ULyraBaseAnimInstance : public UAnimInstance
+{
+	GENERATED_BODY()
+
+public:
+	ULyraBaseAnimInstance();
+
+	// 在动画蓝图中可以直接使用的属性，由Proxy计算后更新
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Lyra|Movement")
+	float GroundSpeed;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category = "Lyra|Movement")
+	bool bIsFalling;
+
+protected:
+	// 2. 重载CreateProxy和DestroyProxy来创建和销毁我们的代理实例
+	virtual FAnimInstanceProxy* CreateProxy() override;
+	virtual void DestroyProxy(FAnimInstanceProxy* InProxy) override;
+
+	// NativeUpdateAnimation现在非常轻量，主要用于数据同步
+	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
+
+	virtual void NativeInitializeAnimation() override;
+
+protected:
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Lyra|Global Variables")
+	TWeakObjectPtr<ALyraCharacter> LyraCharacter;
+	UPROPERTY(EditDefaultsOnly, BlueprintReadOnly, Category = "Lyra|Global Variables")
+	TWeakObjectPtr<UCharacterMovementComponent> CharacterMovement;
+
+private:
+	// 动画实例的代理。这是UAnimInstance和其Proxy之间的桥梁。
+	UPROPERTY(Transient)
+	FLyraBaseAnimInstanceProxy Proxy;
+};
+\end{amzcode}
+
+\subsubsection{源文件 (LyraBaseAnimInstance.cpp)}
+
+在源文件中，我们实现各个函数的具体逻辑。
+
+*   PreUpdate (游戏线程): 从角色和移动组件获取数据，并将其存储在代理的成员变量中。
+*   Update (工作线程): 使用代理中已存储的数据进行计算。**绝不**在此处访问任何UObject（如LyraCharacter）。
+*   NativeUpdateAnimation (游戏线程): 将代理计算完成的结果拷贝回动画实例的属性，以便动画蓝图使用。
+
+\begin{amzcode}{c++}
+// LyraBaseAnimInstance.cpp
+
+#include "AnimInst/LyraBaseAnimInstance.h"
+#include "GameFramework/Character.h"
+#include "GameFramework/CharacterMovementComponent.h"
+
+// --- Proxy Implementation ---
+
+FLyraBaseAnimInstanceProxy::FLyraBaseAnimInstanceProxy(UAnimInstance* Instance)
+	: FAnimInstanceProxy(Instance)
+{
+}
+
+void FLyraBaseAnimInstanceProxy::PreUpdate(UAnimInstance* InAnimInstance, float DeltaSeconds)
+{
+	// 在游戏线程执行：从动画实例和其拥有的对象（Actor等）安全地拷贝数据
+	Super::PreUpdate(InAnimInstance, DeltaSeconds);
+
+	ULyraBaseAnimInstance* LyraAnimInstance = Cast<ULyraBaseAnimInstance>(InAnimInstance);
+	if (LyraAnimInstance && LyraAnimInstance->CharacterMovement.IsValid())
+	{
+		// 将需要的数据从游戏线程对象拷贝到代理的成员变量中
+		CharacterVelocity = LyraAnimInstance->CharacterMovement->Velocity;
+		bIsFalling = LyraAnimInstance->CharacterMovement->IsFalling();
+		// ... 在这里拷贝所有其他需要的数据
+	}
+}
+
+void FLyraBaseAnimInstanceProxy::Update(float DeltaSeconds)
+{
+	// 在工作线程执行：使用拷贝过来的数据进行所有耗时计算
+	// 注意：这里绝对不能访问任何UObject指针（如LyraCharacter或CharacterMovement）
+	Super::Update(DeltaSeconds);
+
+	// 计算水平速度
+	GroundSpeed = FVector(CharacterVelocity.X, CharacterVelocity.Y, 0.0f).Size();
+
+	// ... 在这里执行所有其他的复杂计算
+}
+
+
+// --- AnimInstance Implementation ---
+
+ULyraBaseAnimInstance::ULyraBaseAnimInstance()
+{
+	// 确保启用了多线程更新。如果动画蓝图的设置中未勾选，这行代码会强制开启。
+	bUseMultiThreadedAnimationUpdate = true;
+}
+
+void ULyraBaseAnimInstance::NativeInitializeAnimation()
+{
+	Super::NativeInitializeAnimation();
+	if (AActor* OwningActor = GetOwningActor())
+	{
+		LyraCharacter = Cast<ALyraCharacter>(OwningActor);
+		CharacterMovement = LyraCharacter.IsValid() ? LyraCharacter->GetCharacterMovement() : nullptr;
+	}
+}
+
+FAnimInstanceProxy* ULyraBaseAnimInstance::CreateProxy()
+{
+	// 创建代理实例
+	return new FLyraBaseAnimInstanceProxy(this);
+}
+
+void ULyraBaseAnimInstance::DestroyProxy(FAnimInstanceProxy* InProxy)
+{
+	// 销毁代理实例
+	delete InProxy;
+}
+
+void ULyraBaseAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+	Super::NativeUpdateAnimation(DeltaSeconds);
+
+	// 在游戏线程执行：从代理获取计算结果，更新到动画实例的属性上
+	// 这样动画蓝图就可以使用这些最新的值
+	GroundSpeed = Proxy.GetGroundSpeed();
+	bIsFalling = Proxy.GetIsFalling();
+}
+\end{amzcode}
+
+这个模式的核心思想是 **数据分离**:
+
+1.  **游戏线程 (Game Thread)**: PreUpdate 负责从游戏世界收集原始数据（如速度、状态）。
+2.  **工作线程 (Worker Thread)**: Update 接收这些拷贝好的、线程安全的数据，并执行所有复杂的计算。
+3.  **游戏线程 (Game Thread)**: NativeUpdateAnimation (或 PostUpdate) 将计算结果同步回 UAnimInstance，供动画蓝图使用。
+
+这种方式结构清晰，性能和扩展性都非常出色，完全能够满足您未来大量计算的需求。
+
+\subsection{结论}
+
+考虑到您“预计未来会有大量的求值计算”，强烈建议从一开始就使用 \il{FAnimInstanceProxy} 模式。
+
+虽然初始设置稍微复杂，但它提供的清晰结构、高性能和强大的扩展性，将为项目未来的维护和性能优化带来巨大好处，完全符合您的长远需求。只重载 \il{NativeThreadSafeUpdateAnimation} 是一种捷径，但对于复杂系统而言，它很快会成为技术债务。
 \end{document}
