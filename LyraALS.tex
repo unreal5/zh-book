@@ -27,7 +27,7 @@
 
 \mainmatter
 \pagestyle{fancy}
-\setchapterimage{./images/background}
+%\setchapterimage{./images/background}
 
 \chapter{启始}
 \section{NativeThreadSafeUpdateAnimation VS FAnimInstanceProxy}
@@ -85,17 +85,6 @@
 
 \begin{amzcode}{c++}
 // LyraBaseAnimInstance.h
-
-#pragma once
-
-#include "CoreMinimal.h"
-#include "Animation/AnimInstance.h"
-#include "Animation/AnimInstanceProxy.h" // 必须包含代理头文件
-#include "LyraBaseAnimInstance.generated.h"
-
-class ALyraCharacter;
-class UCharacterMovementComponent;
-
 // 1. 定义代理结构体，它将包含所有线程安全的数据和求值逻辑
 USTRUCT()
 struct FLyraBaseAnimInstanceProxy : public FAnimInstanceProxy
@@ -168,18 +157,14 @@ private:
 \subsubsection{源文件 (LyraBaseAnimInstance.cpp)}
 
 在源文件中，我们实现各个函数的具体逻辑。
-
-*   PreUpdate (游戏线程): 从角色和移动组件获取数据，并将其存储在代理的成员变量中。
-*   Update (工作线程): 使用代理中已存储的数据进行计算。**绝不**在此处访问任何UObject（如LyraCharacter）。
-*   NativeUpdateAnimation (游戏线程): 将代理计算完成的结果拷贝回动画实例的属性，以便动画蓝图使用。
+\begin{itemize}
+\item \il{PreUpdate} (游戏线程): 从角色和移动组件获取数据，并将其存储在代理的成员变量中。
+\item \il{Update} (工作线程): 使用代理中已存储的数据进行计算。\textbf{绝不}在此处访问任何\il{UObject}（如LyraCharacter）。
+\item \il{NativeUpdateAnimation} (游戏线程): 将代理计算完成的结果拷贝回动画实例的属性，以便动画蓝图使用。
+\end{itemize}
 
 \begin{amzcode}{c++}
 // LyraBaseAnimInstance.cpp
-
-#include "AnimInst/LyraBaseAnimInstance.h"
-#include "GameFramework/Character.h"
-#include "GameFramework/CharacterMovementComponent.h"
-
 // --- Proxy Implementation ---
 
 FLyraBaseAnimInstanceProxy::FLyraBaseAnimInstanceProxy(UAnimInstance* Instance)
@@ -263,10 +248,288 @@ void ULyraBaseAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
 3.  **游戏线程 (Game Thread)**: NativeUpdateAnimation (或 PostUpdate) 将计算结果同步回 UAnimInstance，供动画蓝图使用。
 
 这种方式结构清晰，性能和扩展性都非常出色，完全能够满足您未来大量计算的需求。
+\subsection{github copilot示例及解决方案}
+\paragraph{要点：}
+动画蓝图不直接访问 Proxy。把要用到的值声明成 UAnimInstance 的 \il{UPROPERTY(BlueprintReadOnly)}，动画图会自动用到其在 Proxy 中的线程安全拷贝。
 
+C++在 \il{NativeUpdateAnimation} 里计算并写入这些 UPROPERTY；Proxy 在 \il{PreUpdate} 把它们拷到线程安全字段给并行评估用。
+
+如需在蓝图事件图读取“并行阶段的快照”，提供一个 BlueprintPure Getter，从游戏线程读取自定义 Proxy 的缓存。
+在动画蓝图中使用方式：
+在 ABP 的变量面板直接拖拽 Speed（或你的任意 UPROPERTY）进 AnimGraph，用于 BlendSpace、State Machine 条件等。
+如果要读线程快照，调用 \il{GetSpeedTS_Snapshot} 蓝图函数节点。
+下面示例添加一个 Speed 变量，并让 Proxy 在并行阶段使用其快照，同时提供一个蓝图 Getter 读取快照。
+
+代理实现：
+\begin{amzcode}{cpp}
+#pragma once
+
+#include "Animation/AnimInstanceProxy.h"
+
+class ULyraBaseAnimInstance;
+
+// 自定义 Proxy：仅存跨线程快照
+struct FLyraBaseAnimInstanceProxy final : public FAnimInstanceProxy
+{
+	FLyraBaseAnimInstanceProxy() : FAnimInstanceProxy() {}
+	explicit FLyraBaseAnimInstanceProxy(UAnimInstance* InInstance) : FAnimInstanceProxy(InInstance) {}
+
+	// 线程安全快照(TS = Thread Safe)
+	float SpeedTS = 0.f;
+
+	virtual void PreUpdate(UAnimInstance* InAnimInstance, float DeltaSeconds) override;
+};
+\end{amzcode}
+\begin{amzcode}{cpp}
+#include "AnimInst/LyraBaseAnimInstanceProxy.h"
+#include "AnimInst/LyraBaseAnimInstance.h"
+
+void FLyraBaseAnimInstanceProxy::PreUpdate(UAnimInstance* InAnimInstance, float DeltaSeconds)
+{
+	FAnimInstanceProxy::PreUpdate(InAnimInstance, DeltaSeconds);
+
+	if (const auto* Inst = Cast<ULyraBaseAnimInstance>(InAnimInstance))
+	{
+		SpeedTS = Inst->GetSpeed(); // 从实例拷贝到线程安全字段
+	}
+}
+\end{amzcode}
+动画实例的实现：
+\begin{amzcode}{cpp}
+UCLASS(Transient, Blueprintable, Abstract)
+class LYRAALS_API ULyraBaseAnimInstance : public UAnimInstance
+{
+	GENERATED_BODY()
+
+public:
+	ULyraBaseAnimInstance() = default;
+
+	virtual void NativeInitializeAnimation() override;
+	virtual void NativeUpdateAnimation(float DeltaSeconds) override;
+
+	// 供 Proxy 读取，也可在 C++/蓝图读取（动画图会自动使用它的代理镜像）
+	UFUNCTION(BlueprintPure, Category="Lyra|Movement")
+	float GetSpeed() const { return Speed; }
+
+	// 可选：蓝图读取并行快照（仅在游戏线程调用）
+	UFUNCTION(BlueprintPure, Category="Lyra|Movement")
+	float GetSpeedTS_Snapshot() const;
+
+protected:
+	// 动画蓝图直接使用这个变量（出现在变量面板，可接到 BlendSpace/条件等）
+	UPROPERTY(Transient, BlueprintReadOnly, Category="Lyra|Movement", meta=(AllowPrivateAccess="true"))
+	float Speed = 0.f;
+
+	// 工程已有的弱引用
+	UPROPERTY(Transient, BlueprintReadOnly, Category="Lyra|Global Variables")
+	TWeakObjectPtr<ALyraCharacter> LyraCharacter;
+
+	UPROPERTY(Transient, BlueprintReadOnly, Category="Lyra|Global Variables")
+	TWeakObjectPtr<UCharacterMovementComponent> CharacterMovement;
+
+	// 接入自定义 Proxy
+	virtual FAnimInstanceProxy* CreateAnimInstanceProxy() override;
+	virtual void DestroyAnimInstanceProxy(FAnimInstanceProxy* InProxy) override;
+};
+\end{amzcode}
+实现：
+\begin{amzcode}{cpp}
+void ULyraBaseAnimInstance::NativeInitializeAnimation()
+{
+	Super::NativeInitializeAnimation();
+
+	LyraCharacter = Cast<ALyraCharacter>(TryGetPawnOwner());
+	if (LyraCharacter.IsValid())
+	{
+		CharacterMovement = LyraCharacter->GetCharacterMovement();
+	}
+}
+
+void ULyraBaseAnimInstance::NativeUpdateAnimation(float DeltaSeconds)
+{
+	Super::NativeUpdateAnimation(DeltaSeconds);
+
+	// 运行时可能重新获取
+	if (!LyraCharacter.IsValid())
+	{
+		LyraCharacter = Cast<ALyraCharacter>(TryGetPawnOwner());
+		if (LyraCharacter.IsValid())
+		{
+			CharacterMovement = LyraCharacter->GetCharacterMovement();
+		}
+	}
+
+	// 计算给动画图使用的值（游戏线程）
+	Speed = CharacterMovement.IsValid() ? CharacterMovement->Velocity.Size() : 0.f;
+}
+
+FAnimInstanceProxy* ULyraBaseAnimInstance::CreateAnimInstanceProxy()
+{
+	return new FLyraBaseAnimInstanceProxy(this);
+}
+
+void ULyraBaseAnimInstance::DestroyAnimInstanceProxy(FAnimInstanceProxy* InProxy)
+{
+	delete static_cast<FLyraBaseAnimInstanceProxy*>(InProxy);
+}
+
+float ULyraBaseAnimInstance::GetSpeedTS_Snapshot() const
+{
+	const auto& P = GetProxyOnGameThread<FLyraBaseAnimInstanceProxy>();
+	return P.SpeedTS;
+}
+\end{amzcode}
 \subsection{结论}
 
 考虑到您“预计未来会有大量的求值计算”，强烈建议从一开始就使用 \il{FAnimInstanceProxy} 模式。
 
 虽然初始设置稍微复杂，但它提供的清晰结构、高性能和强大的扩展性，将为项目未来的维护和性能优化带来巨大好处，完全符合您的长远需求。只重载 \il{NativeThreadSafeUpdateAnimation} 是一种捷径，但对于复杂系统而言，它很快会成为技术债务。
+
+\section{Animation Layer Interfaces 概述}
+
+Animation Layer Interfaces（简称 ALI）是组织和复用动画层一种结构。在动画蓝图的事件图中，一团代码可以折叠成函数，从而达到复用/变量化的目的。然而，对于动画结点却不可以，\il{ALI}主要是为了解决这个问题而设计的。当然，如果不使用这种方式，也可以达到同样的目的：例如，在\il{UAnimInstance}派生类中设计一些动画序列变量，然后在运行时，根据某个状态来更改，但系统提供了更健壮、更灵活的开箱即用的产品，没理由不使用。
+
+\begin{itemize}
+  \item 目标：创建一个 Animation Layer Interface，在其中定义一个或多个 Animation Layers（例如 Idle Layer），并在动画蓝图中使用这些层以实现模块化动画逻辑。
+  \item 创建流程（简要）：
+    \begin{enumerate}
+      \item 在 Content 目录中右键 → Animation → Animation Layer Interface，创建一个接口（示例命名为 \il{ALI_Lyra}）。
+      \item 在接口内添加动画层（例如添加 Idle Layer）；该层通常不需要输入参数，仅有输出。
+      \item 在目标 Animation Blueprint（如 \il{ABP_Base}）中打开 Class Settings，添加并实现该接口（添加 \il{ALI_Lyra}）。
+      \item 将生成的 Idle Layer 拖入 Anim Graph 并连接；具体层的实现可以粘贴或复用现有的 Blend Poses（例如枪械的 Blend Poses）来快速测试。
+    \end{enumerate}
+  \item 推荐架构：
+    \begin{itemize}
+      \item 虽然可以直接在 ABP\_Base 中实现这些层并运行，但更优的做法是把具体层的实现放到另一个专门的 Animation Blueprint（例如 ABP\_Layers）中。
+      \item ABP\_Base 负责主 Anim Graph，并通过实现的接口调用 ABP\_Layers 中的各个 layer，从而实现更好的模块化、可维护性和复用性。
+    \end{itemize}
+  \item 作用与背景：该方法被 ALS v4 以及 Lyra 的高级 locomotion 等项目采用，便于把动画层拆分为可重用的模块。
+  \item 备注：视频演示中演示了将 Blend Poses 直接粘贴到层中以测试功能，但讲师建议采用分离层实现的方式，后续视频会进一步解释和展示该方法的优点。
+\end{itemize}
+
+
+
+\section{Link Anim Class 详述}
+
+本视频讲解如何使用独立的 Animation Blueprint（下称 ABP\_Layers）来承载动画层，并在角色蓝图中通过 "Link Anim Class Layers" 节点将这些层替换到主动画蓝图（ABP\_Base）中，实现模块化与复用。详细内容分点说明如下：
+
+\subsection{设计目标与总体思路}
+\begin{itemize}
+  \item 将与\emph{动画层}（Animation Layers）相关的内容从主动画蓝图（ABP\_Base）拆分出来，放入专门的动画蓝图（ABP\_Layers），以提升清晰度、优化与易扩展性。
+  \item 在 ABP\_Base 中保留与动画计算相关的逻辑（例如速度、其他数值计算）与主 Anim Graph，而把具体的 layer 实现交给 ABP\_Layers。
+  \item 在角色类（Character Class）的生命周期中（例如 EventBeginPlay），调用 LinkAnimClassLayers 将 ABP\_Base 中的占位层替换为 ABP\_Layers 中实现的层，从而在运行时“接入”具体层的动画输出。
+\end{itemize}
+
+\subsection{创建 ABP\_Layers（步骤）}
+\begin{enumerate}
+  \item 在 Content Drawer 中进入 ALS/Animation Blueprints，右键 → Animation Blueprint，创建一个新的动画蓝图，命名为 \texttt{ABP\_Layers}。
+  \item 打开 \texttt{ABP\_Layers}，进入 Class Settings，点击 Implement Interfaces，然后添加之前创建的 Animation Layer Interface（如 ALI\_Lyra）。这样 \texttt{ABP\_Layers} 就包含了接口中定义的各个 layer。
+  \item 注意：因为 \texttt{ABP\_Layers} 仅作为 layer 的容器，它的 Anim Graph 不需要输出最终姿势（不作为主输出），因此可以不维护 Event Graph 或其它不必要的部分。
+\end{enumerate}
+
+\subsection{在 ABP\_Layers 中实现 Idle Layer（示例实现）}
+\begin{enumerate}
+  \item 在 Idle Layer 的 Anim Graph 内，添加一个 Sequence Player 结点用于播放静止动画序列。
+  \item 将 Sequence Player 的动画资源暴露为一个变量（将 Sequence Player 的动画 pin 提升为变量），命名为 \texttt{IdleAnim}，以便从外部（或编辑器）为该层设置不同的动画资产。
+  \item 在示例中，将 \texttt{IdleAnim} 指向一个无武装（unarmed）的 idle 动画，编译以保存设置。注意：仅设置变量并不会立即在角色上显示效果，需完成链接流程。
+\end{enumerate}
+
+\subsection{在角色类中链接层（Link Anim Class Layers）}
+\begin{itemize}
+  \item 在角色类（Character Class）的 EventBeginPlay 中，获取角色的 Mesh（骨骼网格体），并调用节点 Link Anim Class Layers（或等价 API），将所创建的 \texttt{ABP\_Layers} 指定为要链接的动画蓝图层集合。
+  \item 该节点的作用：在运行时将 ABP\_Base 中存在但未实现具体内容的所有动画层（占位层）替换为 \texttt{ABP\_Layers} 中实现的对应层，从而让角色使用这些具体层的动画（例如已设置的 unarmed idle）。
+  \item 演示效果：链接后运行游戏，角色显示为无武装的 idle 状态；如果断开链接或不链接，则会回到原有占位姿势或无效果。
+\end{itemize}
+
+\subsection{关键要点与好处}
+\begin{itemize}
+  \item 模块化：将层拆分到单独蓝图后，可以独立开发、测试与复用（例如为武器、配件或特殊动作快速添加 layer）。
+  \item 可配置性：通过在 ABP\_Layers 中使用公开变量（如 \texttt{IdleAnim}），可以在实例化或通过链接时灵活替换动画资产。
+  \item 可扩展性：当需要添加新武器（如火箭发射器）或新动作时，只需在 ABP\_Layers 中新增 layer 并在角色中链接，无需修改 ABP\_Base 的核心计算逻辑。
+  \item 性能与清晰性：把计算（速度、状态等）保留在 ABP\_Base，而把具体输出交给 ABP\_Layers，有助于代码/蓝图组织更清晰，且便于优化和多人协作。
+\end{itemize}
+
+\subsection{示例流程小结（按时序）}
+\begin{enumerate}
+  \item 在 Content 中创建 \texttt{ABP\_Layers}，并在 Class Settings 中实现 Animation Layer Interface（如 ALI\_Lyra）。
+  \item 在 \texttt{ABP\_Layers} 中为每个 layer（示例：Idle Layer）实现动画逻辑，并将关键动画资源暴露为变量（例如 \texttt{IdleAnim}）。
+  \item 在角色类的 EventBeginPlay 中调用 LinkAnimClassLayers，将 \texttt{ABP\_Layers} 链接到当前角色的 Anim Class Layers。
+  \item 运行时，ABP\_Base 中的占位层将被替换为 \texttt{ABP\_Layers} 的实现，从而展现预期动画。
+\end{enumerate}
+\subsection{动画层级关系图}
+% 使用 \resizebox{\linewidth}{!}{...} 以确保图形横向填满页面宽度
+\resizebox{\linewidth}{!}{%
+\begin{tikzpicture}[
+  scale=0.95, % 内部微调比例（resizebox 已负责整体缩放）
+  every node/.style={font=\small},
+  node distance=10mm and 20mm,
+  iface/.style={draw=blue!70, fill=blue!8, thick, rounded corners, align=center, minimum width=36mm},
+  base/.style={draw=orange!75, fill=orange!8, thick, rounded corners, align=center, minimum width=36mm},
+  layers/.style={draw=teal!70, fill=teal!8, thick, rounded corners, align=center, minimum width=36mm},
+  layerexp/.style={draw=green!70, fill=green!12, thick, rounded corners, align=center, minimum width=30mm},
+  collapsed/.style={draw=gray!40, fill=gray!6, rounded corners, align=center, minimum width=18mm, minimum height=6mm, font=\scriptsize},
+  char/.style={draw=black!70, fill=black!6, thick, rounded corners, align=center, minimum width=36mm},
+  linknode/.style={draw=red!70, fill=red!6, thick, rounded corners, align=center, minimum width=30mm},
+  legendbox/.style={draw=black!40, fill=white, rounded corners, font=\footnotesize, inner sep=6pt},
+  arrow/.style={-{Stealth[scale=1]}, thick},
+  dashedarrow/.style={-{Stealth[scale=1]}, thick, dashed}
+]
+
+  % Top-level nodes
+  \node[iface] (content) {Content / Interfaces};
+  \node[below=of content, iface] (ali) {ALI\_Lyra\\(Animation Layer Interface)};
+
+  % Middle: ABP_Base (left) and ABP_Layers (right)
+  \node[below left=15mm and 20mm of ali, base] (abpbase) {ABP\_Base\\(主动画蓝图)\\占位 Layer};
+  \node[below right=15mm and 20mm of ali, layers] (abplayers) {ABP\_Layers\\(Layer 容器)\\实现各层};
+
+  % Layer implementations under ABP_Layers
+  \node[below=of abplayers, layerexp] (idle) {Idle Layer\\Sequence Player\\\texttt{IdleAnim} (variable)};
+  \node[right=12mm of idle, collapsed] (weapon) {...\\Weapon Layers};
+  \node[left=12mm of idle, collapsed] (upperbody) {...\\UpperBody Layers};
+
+  % Placeholder under ABP_Base
+  \node[below=of abpbase, collapsed] (placeholder) {Idle Layer (占位)};
+
+  % Character and link node (left side)
+  \node[left=34mm of abpbase, char] (character) {Character Class\\EventBeginPlay};
+  \node[below=of character, linknode] (link) {LinkAnimClassLayers};
+
+  % Connections
+  \draw[arrow] (content) -- (ali);
+  \draw[arrow] (ali) -- (abpbase) node[midway, left, font=\small] {接口实现};
+  \draw[arrow] (ali) -- (abplayers) node[midway, right, font=\small] {接口实现};
+
+  \draw[arrow] (abplayers) -- (idle) node[midway, right, font=\small] {包含具体实现};
+  \draw[arrow] (abplayers) -- (upperbody);
+  \draw[arrow] (abplayers) -- (weapon);
+
+  \draw[arrow] (abpbase) -- (placeholder) node[midway, left, font=\small] {占位层};
+
+  \draw[arrow] (character) -- (link);
+  \draw[dashedarrow] (link) to[bend left=20] node[midway, above, font=\small] {指定 \texttt{ABP\_Layers}} (abplayers);
+  \draw[dashedarrow] (link) to[bend right=20] node[midway, above, font=\small] {替换 ABP\_Base 的层} (abpbase);
+
+  % Legend placed above the note (under the figure)
+  \node[legendbox, below=12mm of upperbody, anchor=north] (legend) {
+    \begin{tabular}{@{}l@{\quad}l}
+      \tikz \node[iface, minimum width=6mm, minimum height=4mm] {}; & Interface / Content \\
+      \tikz \node[base, minimum width=6mm, minimum height=4mm] {}; & ABP\_Base (占位) \\
+      \tikz \node[layers, minimum width=6mm, minimum height=4mm] {}; & ABP\_Layers (实现容器) \\
+      \tikz \node[layerexp, minimum width=6mm, minimum height=4mm] {}; & 展开层（具体实现） \\
+      \tikz \node[collapsed, minimum width=6mm, minimum height=4mm] {}; & 折叠/占位 层 \\
+      \tikz \node[linknode, minimum width=6mm, minimum height=4mm] {}; & 运行时链接节点
+    \end{tabular}
+  };
+
+  % EXAMPLE / NOTE moved to bottom (below legend)
+  \node[draw=none, below=6mm of legend, align=left, font=\footnotesize] (note) {
+    示例与说明：运行时调用 \texttt{LinkAnimClassLayers} 会将 \texttt{ABP\_Base} 中的占位层替换为 \texttt{ABP\_Layers} 中实现的对应层（例如 Idle Layer），从而使角色显示设定好的动画（如 unarmed idle）。图中绿色节点为具体实现，灰色为占位/折叠表示。
+  };
+
+\end{tikzpicture}%
+} % end resizebox
+
+\subsection{结语与后续内容}
+本视频主要演示了如何把动画层作为独立容器并在运行时链接回主动画蓝图，从而获得模块化和复用的优势。作者在下一视频中将继续展示这些 ABP\_Layers 的更高级用法与亮点，建议继续观看以理解完整工作流与实战技巧。
 \end{document}
