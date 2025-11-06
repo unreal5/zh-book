@@ -532,4 +532,96 @@ Animation Layer Interfaces（简称 ALI）是组织和复用动画层一种结�
 
 \subsection{结语与后续内容}
 本视频主要演示了如何把动画层作为独立容器并在运行时链接回主动画蓝图，从而获得模块化和复用的优势。作者在下一视频中将继续展示这些 ABP\_Layers 的更高级用法与亮点，建议继续观看以理解完整工作流与实战技巧。
+
+\setchapterimage{./images/root.png}
+\chapter{Root Motion}
+\section{Root Motion 启用与否的差异}
+
+\subsection{概念性差异}
+\begin{itemize}
+    \item \textbf{启用 Root Motion：} 动画资产携带根骨骼的位移和旋转。在动画评估时，引擎会提取这部分运动（即“根运动”），并用它来驱动 \texttt{Actor} 或角色的世界变换（如果 \texttt{AnimInstance} 的根运动模式允许）。动画本身会直接导致角色在游戏世界中移动。
+    \item \textbf{未启用 Root Motion：} 动画通常是“在原地播放”（in-place），根骨骼不包含全局位移。角色的位置由 \texttt{CharacterMovementComponent} 或自定义代码逻辑驱动，动画只负责骨骼的相对姿态。
+\end{itemize}
+
+\subsection{主要注意事项}
+\begin{itemize}
+    \item \textbf{提取时机与设置：} 即使动画包含根运动数据，是否实际应用它取决于 \texttt{AnimInstance} 的 \texttt{Root Motion Mode} 设置（例如 \texttt{Root Motion from Everything} 或 \texttt{Root Motion from Montages Only}）。通常，将根运动放在 \texttt{AnimMontage} 中更容易控制其生效时机。
+
+    \item \textbf{与 CharacterMovement 的协作：} 启用根运动时，通常由\textbf{动画驱动位移}，而 \il{CharacterMovementComponent} 则负责处理由该位移引发的碰撞、滑动和地面检测。混合使用原地动画和根运动动画时，必须明确哪个系统在何时负责位移。
+
+    \item \textbf{网络复制：} 根运动的网络复制很复杂。默认情况下，网络移动基于 \texttt{CharacterMovementComponent} 的客户端预测和服务器修正。启用根运动时，需要依赖引擎内置的根运动复制机制或实现专门的服务器权威逻辑，否则极易出现客户端与服务器不同步的问题。
+
+    \item \textbf{播放控制与蒙太奇：} 强烈建议将带有根运动的关键动作（如翻滚、特殊攻击）放在 \texttt{AnimMontage} 中。这便于精确控制根运动的开始、结束、同步，并且引擎对蒙太奇的根运动支持更为明确和健壮。
+
+    \item \textbf{骨骼与资源制作：} 确保根骨骼是正确的，并且位移信息已烘焙到根骨骼上。注意，动画重定向（Retargeting）过程可能会改变或丢失根运动数据。不要将位移信息放在加法（additive）动画层中。
+
+    \item \textbf{混合和层级：} 混合多个带有根运动的动画会导致位移合成变得复杂且不可预测。通常应避免在多个动画层上同时启用完整的根运动。
+
+    \item \textbf{Root Motion Root Lock / 原点策略：} 根据需要选择合适的根锁定选项（如 \texttt{Reference Pose}, \texttt{Anim First Frame}, \texttt{Zero}），这会影响姿态和旋转的参考点，从而影响角色最终的位置和朝向。
+
+    \item \textbf{调试与测试：} 在编辑器中开启根运动可视化功能，检查实际提取的运动轨迹是否符合预期。在不同的网络条件、物理和碰撞设置下进行充分测试。
+
+    \item \textbf{线程安全与评估：} 动画评估（包括根运动提取）可能在工作线程（动画代理线程）上执行。最终的位移应用会回到游戏线程。遵循代理模式：在游戏线程的 \texttt{PreUpdate} 中快照所需数据，在工作线程中计算，在游戏线程的 \texttt{PostUpdate} 中应用结果。
+\end{itemize}
+
+\subsection{何时使用}
+\begin{itemize}
+    \item \textbf{使用 Root Motion：} 适用于需要动画与位移精确同步的复杂动作，例如翻滚、跳跃、攀爬、特定的攻击位移等。
+    \item \textbf{不使用 Root Motion：} 适用于常规的、由玩家输入控制的持续性移动，如行走、奔跑。将位移控制权交给 \texttt{CharacterMovementComponent} 更便于网络预测和物理交互。
+\end{itemize}
+
+\subsection{简短结论}
+启用根运动会将位移的控制权“从动画赋予世界”，其管理较为复杂，但适用于动作驱动的移动。禁用根运动则将位移控制权交给代码（如 \texttt{CharacterMovementComponent}），更易于网络同步和物理预测。
+\subsubsection{从动画赋予世界的解释}
+这句话的意思是，当启用根运动时，角色在游戏世界中的实际位置移动，是由播放的动画文件本身来决定的，而不是由常规的角色移动代码（如 CharacterMovementComponent）来控制。
+可以这样理解：
+\begin{itemize}
+\item 常规情况 (未启用根运动):
+	\begin{enumerate}
+		\item 控制权在代码/蓝图：你按下 W 键，CharacterMovementComponent 计算出角色应该向前移动，并更新其在世界中的位置。
+		\item 动画只是“表演”：动画系统播放一个“原地行走”的动画来匹配这个移动。动画本身并没有让角色真的前进，它只是在原地摆动腿。位移是由代码驱动的。
+	\end{enumerate}
+\item 启用根运动后:
+	\begin{enumerate}
+	\item 控制权在动画文件：动画师在制作一个“前冲攻击”的动画时，已经让角色的根骨骼在动画中向前移动了1米。
+	\item 动画“驱动”世界：当游戏播放这个动画时，引擎会提取出根骨骼移动1米的数据，并将其应用到角色在游戏世界中的实际位置上。角色真的向前移动了1米，因为动画文件就是这么设计的。
+	\end{enumerate}
+\end{itemize}	
+所以，“从动画赋予世界”就是指，将动画文件（UAnimSequence）中包含的位移信息（“从动画”），直接应用为角色在游戏世界（“世界”）中的实际位置变化（“赋予”）。控制权从通用的移动代码转移到了特定的动画资产上。
+\section{Force Root Lock 的作用}
+
+\texttt{Force Root Lock} 是一个可以在动画序列(\texttt{AnimSequence})或动画蒙太奇(\texttt{AnimMontage})中设置的选项。其核心作用是：
+
+\textbf{强制禁用根运动中的“平移”部分，但通常会保留“旋转”部分。}
+
+\subsection{具体效果}
+当勾选此选项时：
+\begin{itemize}
+    \item \textbf{阻止位移：} 即使动画文件本身包含让角色向前、向后或侧向移动的根运动数据，角色的碰撞体（Capsule）也不会在世界中发生实际的位置移动。角色在平移上被“锁定”在原地。
+    \item \textbf{保留姿态和旋转：} 动画的姿态（骨骼如何弯曲）和根骨骼的旋转（角色朝向的变化）仍然会被应用。
+\end{itemize}
+
+\subsection{主要使用场景}
+这个选项非常有用，主要用于以下情况：
+\begin{itemize}
+    \item \textbf{上半身动画蒙太奇：} 这是最常见的用法。想象一个角色正在奔跑（由 \texttt{CharacterMovementComponent} 控制移动），此时需要播放一个上半身的攻击或施法动画。这个攻击动画本身可能带有向前冲刺的根运动。
+    \begin{itemize}
+        \item \textbf{不使用 \texttt{Force Root Lock}：} 角色在奔跑的基础上，还会叠加攻击动画的根运动，导致一个不自然的、过快的“二次加速”前冲。
+        \item \textbf{使用 \texttt{Force Root Lock}：} 角色的奔跑速度完全由 \texttt{CharacterMovementComponent} 控制。攻击蒙太奇播放时，只会应用其攻击的姿态和身体的扭转，而不会应用其向前冲刺的位移。这样看起来就像角色在保持奔跑速度的同时，完成了攻击动作。
+    \end{itemize}
+
+    \item \textbf{需要动画姿态但不需要位移的场合：} 你可能喜欢某个带根运动的动画（比如一个有力的挥拳动作），但希望角色在原地完成这个动作，而不是像动画数据显示的那样向前冲一步。勾选 \texttt{Force Root Lock} 就可以让你“借用”这个动画的姿态，而忽略它的位移。
+
+    \item \textbf{平滑过渡：} 在从一个根运动动画过渡回一个“原地”（In-place）动画时，使用这个选项可以帮助防止角色位置在过渡瞬间发生跳变。
+\end{itemize}
+
+\subsection{与之前概念的联系}
+回到“从动画赋予世界”这句话：
+\begin{itemize}
+    \item \textbf{常规根运动：} 是“动画”将它的“位移和旋转”赋予“世界”中的角色。
+    \item \textbf{启用 \texttt{Force Root Lock}：} 你对引擎说：“这次动画只能把它的‘旋转和姿态’赋予世界，把‘位移’留下，位移由我（代码/\texttt{CharacterMovementComponent}）自己控制。”
+\end{itemize}
+
+因此，\texttt{Force Root Lock} 是一个强大的工具，它让你能更精细地控制根运动，决定是完全采用动画的运动数据，还是只采用其中的一部分。
+
 \end{document}
