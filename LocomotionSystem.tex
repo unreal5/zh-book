@@ -725,4 +725,73 @@ void ULSBaseAnimInstance::NativeThreadSafeUpdateAnimation(float DeltaSeconds)
 \item 若希望预览时看见网格随根骨位移，或不使用Root Motion，可关闭。
 \item 配合“Root Motion Root Lock”一起使用，选择锁定到零点、参考姿势或动画首帧。
 \end{itemize}
+
+
+\section{Stride Warping}
+\begin{itemize}
+\item 用于把循环行走/奔跑动画的步幅（stride）按角色当前速度/方向动态拉伸或收缩，从而减少足迹滑移并让动画与移动更匹配。
+\item 典型用于「in-place」 locomotion 动作（动画自身没有或很少 root motion），由速度驱动变形骨骼（通常是骨盆/髋）和步长缩放。
+\end{itemize}
+
+使用步骤（AnimBP / AnimGraph）
+\begin{enumerate}
+\item 准备
+   \begin{itemize}
+   \item 使用与角色骨架一致的循环行走/奔跑动画（最好是 in-place）。
+   \item 确认骨骼名称：Pelvis/Hips、LeftFoot、RightFoot 等与节点配置一致。
+   \end{itemize}
+
+\item 在 AnimGraph 中添加节点
+
+   \begin{itemize}
+   \item 搜索并添加 Stride Warping 节点（在 AnimGraph 节点搜素里）。
+   \item 将你的基础 locomotion pose 连入节点的 Pose 输入，节点输出连到后续 IK／最终 Pose。
+   \end{itemize}
+
+\item 给节点提供运动参数
+	\begin{itemize}
+	\item 将角色速度（通常来自 Try Get Pawn Owner -> Get Velocity 的长度）传递给 AnimInstance 的变量 Speed，在 AnimBlueprint Tick 中更新。
+  \item 如果节点有 Velocity/Direction 输入，连到这些变量；否则在节点面板里引用 AnimInstance 的变量。
+	\end{itemize}
+
+\item 配置骨骼与轴向
+		\begin{itemize}
+		\item 指定 Pelvis/Hip Bone 名称、左右脚骨名称。
+   	\item 选择轴向（通常是 X 前进轴）和坐标空间（Component/World/Local），确保与角色一致。
+		\end{itemize}
+
+\item 调整主要参数
+   \begin{itemize}
+   \item Max Stride Scale / Min Stride Scale：限制动画被拉伸或压缩的范围（避免过度失真）。
+   \item Pelvis Translate / Rotate 权重（Pelvis Alpha）：控制骨盆随速度调整的程度。
+   \item Blend In/Out 时间：切换到/离开 warping 的平滑时间。
+   \item Speed Threshold（阈值）：低速时禁用 warping 以避免抖动。
+   \end{itemize}
+\end{enumerate}
+
+调试与常见问题
+
+\begin{itemize}
+\item 可视化：打开 Anim Debug（Anim 调试命令或节点内 Debug 选项）查看骨盆、目标步长和足部位置。
+\item 足迹滑动：如果仍有滑动，减小 Max Stride Scale、增加 Pelvis 调整或配合 Foot IK。
+\item 骨骼命名不匹配会导致无效，检查输入骨骼字符串精确匹配。
+\item 若使用含 Root Motion 的动画，warping 可能与 root motion 冲突：一般对 in-place 动画效果最好；若必须用 root motion，则慎重测试或只在无 root motion 状态下启用。
+\item 方向问题：确认使用的前进轴与角色骨架一致（例如 UE 默认前进是 X 正方向）。
+\end{itemize}
+
+最佳实践
+\begin{itemize}
+\item 用一组不同速度的测试动画（慢走、快走、跑）调参，观察过渡。
+\item 把关键控制暴露为 AnimInstance 变量，方便蓝图或代码在运行时控制（比如根据地面斜度降低 pelvis alpha）。
+\item 与 Foot IK、Pelvis Stabilization 一起使用能显著改善效果。
+\end{itemize}
+
+简短示例流程（概念性）
+
+\begin{itemize}
+\item 在 \il{AnimInstance::NativeUpdateAnimation} 更新：\il{Speed = Owner->GetVelocity().Size()};
+\item AnimGraph：BasePose -> StrideWarping(Pelvis=「pelvis」, LFoot=「foot\_l」, RFoot=「foot\_r」, MaxScale=1.2) -> FootIK -> FinalPose
+\end{itemize}
+
+以上为快速指南，按此流程配置并通过 debug 可视化逐步调优参数。
 \end{document}
