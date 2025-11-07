@@ -623,5 +623,217 @@ Animation Layer Interfaces（简称 ALI）是组织和复用动画层一种结�
 \end{itemize}
 
 因此，\texttt{Force Root Lock} 是一个强大的工具，它让你能更精细地控制根运动，决定是完全采用动画的运动数据，还是只采用其中的一部分。
+\section{Additive Anim Type}
+附加动画是一种可以加在正在播放的动画之上的动画。它类似于对动画进行偏移，譬如向右或向左偏移一点，对吧？这就是加成动画的作用。
+\begin{itemize}
+\item 目标与效果：为角色在向左/向右移动时添加轻微倾斜（lean），使行走与慢跑动作看起来更自然；行走已有一定效果，但慢跑需要增强。
+\item 资源：使用视频提供的资源包 \texttt{61 Lean Animations}，包含三段用于步枪的倾斜动画（center / right / left）。这些动画只影响根骨骼与脊柱，不修改手部，因此可复用于手枪或空手姿势。
+\item 导入步骤：
+\begin{itemize}
+\item 在 Unreal 的 Content 窗格中进入 \texttt{ALS} → \texttt{animations} → \texttt{rifle}（或目标文件夹）。
+\item 新建子文件夹（例如 \texttt{lean}），将动画文件拖放进去。
+\item 导入时选择骨架：\il{SK_Mannequin}，然后导入所有动画资产。
+\end{itemize}
+\item 设置为加成动画（Additive）：
+\begin{itemize}
+\item 对于中心动画（center）：在动画资产的 Additive 设置中将类型改为 Local Space，并将 Base Pose Type 设为 \texttt{Selected Animation Frame}，选择第 0 帧作为基准中心帧。
+\item 对于左右动画（right / left）：同样设置 Additive Anim Type 为 Local Space，Base Pose 指向 center（Selected Animation Frame → center），以便基于中心姿势计算偏移。
+\item 说明：Local Space 与 Mesh Space 对应不同的动画蓝图节点；使用哪种空间就配套使用相应节点。
+\end{itemize}
+\item 完成与应用：保存所有动画设置后，可使用 Blend Space 或动画合成节点将这些加成动画应用于行走/慢跑等播放逻辑中。
+\item 命名参考：示例动画名如 \il{MMRifle jog lean center}；骨架示例为 \il{SK_Mannequin}。
+\item 建议：保持加成动画仅修改根与脊柱，使用统一的中心基准帧可确保在不同武器或姿势间的一致性与可复用性。
+\end{itemize}
 
+\section{0062 — Lean Blend Space（混合空间）详细总结}
+
+\subsection{概述}
+本段字幕讲解如何在 Unreal Engine 中为角色实现“lean”（倾斜/侧倾）效果，采用 Blend Space（混合空间）来在动画蓝图中干净且高效地管理多个倾斜动作。主要内容包括创建 Blend Space 资产、设置网格（grid）和轴（axes）、添加并定位动画样本、使用预览调试、以及通过参数（如 gate）控制倾斜强度与平滑过渡。
+
+\subsection{文件与资产位置}
+\begin{itemize}
+\item 在项目的 ALS 文件夹中创建一个新文件夹：\texttt{blend spaces}，用于存放 Blend Space 资产。
+\item 创建 Blend Space（非 legacy 的 1D），在示例中命名为 \texttt{BS\_lean}，并选择角色使用的 Skeleton（例如 Escape mannequin）。
+\end{itemize}
+
+\subsection{Blend Space 网格与轴设置}
+\begin{itemize}
+\item 水平轴（horizontal axis）
+\begin{itemize}
+\item 名称：\texttt{lean angle}
+\item 取值范围：(-90) 到 (90)（表示左右倾斜角度）
+\item 网格分割（grid division）：水平方向设置为 2（两列）
+\item 启用“snap to grid”，便于将动画样本对齐到网格点
+\end{itemize}
+\item 垂直轴（vertical axis）
+\begin{itemize}
+\item 名称：\texttt{gate}
+\item 取值范围：0 到 1（表示影响倾斜强度的权重或“门”参数）
+\item 网格分割：设置为 2（两行）
+\item 同样启用“snap to grid”
+\end{itemize}
+\end{itemize}
+
+\subsection{添加动画样本与布局策略}
+\begin{itemize}
+\item 在 Blend Space 中搜索并添加与 lean 相关的动画（如 \texttt{jog lean center}, \texttt{lean left}, \texttt{lean right} 等）。
+\item 样本放置建议：
+\begin{itemize}
+\item 当 \texttt{lean angle} = 0（中心）时，放置 center 的动画（如 \texttt{jog lean center}）。
+\item 当 \texttt{lean angle} = -90（极左）时，放置向左倾斜的动画（\texttt{lean left}）。
+\item 当 \texttt{lean angle} = +90（极右）时，放置向右倾斜的动画（\texttt{lean right}）。
+\end{itemize}
+\item 保持样本布局清晰、对称会带来更好插值效果。
+\end{itemize}
+
+\subsection{预览与调试}
+\begin{itemize}
+\item 在 Blend Space 的预览（preview）中选择一个基准姿势（例如 \texttt{pistol jog forward}）来观察样本插值效果。
+\item 通过在网格中移动预览点（按住 Ctrl 并拖动）可观察不同 \texttt{lean angle} 与 \texttt{gate} 组合下的视觉结果。
+\item 常见问题：插值过快或过猛，视觉上显得突兀。
+\end{itemize}
+
+\subsection{平滑与移动时间（Moving Time）}
+\begin{itemize}
+\item 为避免动画切换瞬间完成（过快），调整 horizontal 和 vertical 轴的 Moving Time（移动时间），示例中将其从默认值改为 0.5 秒，使过渡更平滑。
+\item 结果：当在预览点快速移动时，达到目标参数需要约 0.5 秒，减少突兀感。
+\end{itemize}
+
+\subsection{Gate 参数的作用（影响倾斜强度）}
+\begin{itemize}
+\item \texttt{gate} 的范围是 0..1，用于控制倾斜的“幅度”：
+\begin{itemize}
+\item \texttt{gate} = 1：完全按 \texttt{lean angle} 的值倾斜（例如角度接近 ±90 时表现为完全倾斜）。
+\item \texttt{gate} = 0：不倾斜或最小倾斜。
+\end{itemize}
+\item 实际应用示例：行走（walking）时设置 gate 较小（譬如 0.2），跑步或慢跑（jogging）时将 gate 设置为更大，以产生更显著的倾斜效果。
+\end{itemize}
+
+\subsection{在动画蓝图中的使用与建议}
+\begin{itemize}
+\item 创建好 Blend Space 后，将其在 Animation Blueprint（ABP）或 ABP Layer 中作为混合数据源使用——这是将视觉效果整合入角色动画系统的推荐做法。
+\item 推荐流程：
+\begin{enumerate}
+\item 在角色的运行时计算并输出 \texttt{lean angle}（根据移动方向、速度和角色朝向等）；
+\item 计算并输出 \texttt{gate}（根据速度状态，如 walking/jogging/run、是否瞄准等）；
+\item 将两参数传入 Blend Space，从而驱动动画插值。
+\end{enumerate}
+\item 注意事项与边界情况：
+\begin{itemize}
+\item 当角色从静止到移动、或方向突变时，配合合适的 Moving Time 可避免帧间抖动或瞬移。
+\item 小范围 gate（如 0.1–0.3）适合步行，较大 gate 适合疾走/奔跑；根据动作设计与手感调参。
+\item 保证动画样本在网格边界处能平滑过渡，必要时补充中间帧样本。
+\end{itemize}
+\end{itemize}
+
+\subsection{总结要点（便于快速复现）}
+\begin{itemize}
+\item 在 ALS 项目下创建 \texttt{blend spaces} 文件夹并新建 Blend Space（例如 \texttt{BS\_lean}）。
+\item Horizontal axis = \texttt{lean angle}, range = [-90, 90], divisions = 2。
+\item Vertical axis = \texttt{gate}, range = [0, 1], divisions = 2。
+\item 启用 snap-to-grid，按网格放置 center/left/right 动画样本。
+\item 将 horizontal/vertical 的 Moving Time 设为 0.5 以平滑过渡。
+\item 在 Animation Blueprint 中用运行时参数驱动 \texttt{lean angle} 和 \texttt{gate}，根据速度和动作状态调整 gate（例如 walking ≈ 0.2）。
+\end{itemize}
+
+\subsection{补充建议}
+\begin{itemize}
+\item 在蓝图或 C++ 中封装计算 \texttt{lean angle} 与 \texttt{gate} 的函数/模块，便于复用与调试。
+\item 增加调试可视化（如在 HUD 或蓝图打印当前参数），能显著加快调整过程。
+\item 若角色有不同武器姿态或动画层（aiming、crouch 等），考虑为不同状态分别使用或调整对应的 Blend Space 参数。
+\end{itemize}
+
+
+
+\section{0064 — Calculate Lean Angle（计算倾斜角）}
+
+\subsection{总体目标}
+本段字幕演示如何在 Animation Blueprint 的基础层（ABP Base / Rotation Data）中计算角色的 lean（侧倾）角度。思路是通过比较当前帧与上一帧的角色朝向（yaw）差值，换算为受时间归一化的角速度，然后限制与缩放该值以得到最终的 lean angle，最后将该值传递给动画系统（如 ABP Layers）以驱动视觉侧倾。
+
+\subsection{输入与输出（契约）}
+\begin{itemize}
+\item 输入
+\begin{itemize}
+\item 当前帧角色的 World Rotation（只需 Yaw 分量）。
+\item 上一帧保存的 Actor Yaw（从变量读取）。
+\item Delta Time（帧时间，作为时间归一化因子）。
+\end{itemize}
+\item 输出
+\begin{itemize}
+\item lean angle（已 clamp 到 [-90, 90]，并可通过缩放参数放大或缩小）。
+\item lean angle 将通过属性访问（Property Access）从 ABP Base 传给 ABP Layers。
+\end{itemize}
+\item 错误/边界模式：如果不做时间归一化或不 clamp，会得到非常大的数值或不稳定的结果（字幕中提到曾看到 ~200 的错误值）。
+\end{itemize}
+
+\subsection{实现步骤（Blueprint 细节）}
+\begin{enumerate}
+\item 在 ABP Base 或 Rotation Data 函数/节点中获取当前帧的 world rotation：
+\begin{itemize}
+\item 使用 Get World Rotation -> Break Rotator -> 只取 Yaw。
+\item 将该 Yaw Promote 为变量（例如命名为 Actor Yaw）。
+\end{itemize}
+\item 保存“上一帧”的 yaw：
+\begin{itemize}
+\item 在设置当前帧 Actor Yaw 之前，先把现有的 Actor Yaw 复制并存入另一个变量（例如 Last Frame Actor Yaw）。
+\item 这样在设置新值之前，变量 Last Frame Actor Yaw 存储的是上一帧的朝向。
+\end{itemize}
+\item 计算 delta yaw（帧间差）：
+\begin{itemize}
+\item 使用 Last Frame Actor Yaw 与当前 Actor Yaw 相减得到 Delta Actor Yaw（差值）。
+\item 将其也 Promote 为变量（例如 Delta Actor Yaw），并保持执行流的连接。
+\end{itemize}
+\item 将“帧差”转为“时间归一化的角速度”：
+\begin{itemize}
+\item 用 Delta Actor Yaw 除以 Delta Time（或 Delta Seconds）来得到基于时间的变化率（避免依赖帧率）。
+\item 该字幕建议从 Update Animation 的输入获取 Delta Time（在 Blueprint Thread 的 Update Animation 节点中已有 delta 的输入），因此可把 delta time 作为函数输入传入（清晰且整洁）。
+\end{itemize}
+\item 缩放并限制值（Clamp）：
+\begin{itemize}
+\item 若直接除以 delta time 得到的值过大，可再除以一个常数（例子中使用 6）或乘以一个缩放系数，得到合适的数值范围。
+\item 使用 Clamp Angle，限制结果在 [-90, 90] 范围内，避免超过期望的倾斜范围。
+\item 将最终值 Promote 为变量并命名为 Lean Angle，确保有执行针脚来设置该变量。
+\end{itemize}
+\item 将 Lean Angle 暴露给 ABP Layers：
+\begin{itemize}
+\item 在 ABP Layers 中通过 Property Access 获取 ABP Base 的 Lean Angle 并连接到相应 Blend Space/动画输入。
+\item 在运行时观察效果，调整缩放系数（字幕示例中提到将值改为 5 可以增大倾斜量）。
+\end{itemize}
+\end{enumerate}
+
+\subsection{调试与发现的问题}
+\begin{itemize}
+\item 初次调试时在输出日志中打印得到的值，发现未做时间归一化会得到非常大的数字（例如 ~200），因此必须用 Delta Time 做除法。
+\item 为了方便调试，在 Update Animation（蓝图线程）中用 Log String（或 Print）查看中间数值，测试时可取消 debug 的一些编译选项以清晰观察日志。
+\item 发现向后移动时（backward），当前计算出的 lean 方向相反（即朝向错误），这是下一个视频/步骤要修复的问题（字幕在结尾指出这一点，并将在后续演示修正方法）。
+\end{itemize}
+
+\subsection{参数与调节建议}
+\begin{itemize}
+\item delta time：必须使用以避免帧率依赖。
+\item 缩放系数（示例：除以 6 或乘以某系数）：用于调节感受与灵敏度。推荐将其作为可调参数暴露在 ABP Base 或数据表中以便快速调整。
+\item Clamp 范围：字幕示例用 [-90, 90]；根据 Blend Space 与动画设计，可以缩小该范围以获得更自然表现（例如 [-45, 45]）。
+\item 在 ABP Layers 中可再叠加平滑（如插值或移动时间）来避免突变。
+\end{itemize}
+
+\subsection{常见边界情况与改进思路}
+\begin{itemize}
+\item 角色快速转头或鼠标大幅移动会产生较大的 yaw 差值，建议增加平滑器（例如 RInterp 或 FInterp 的蓝图/函数）或限制最大增量以防突兀。
+\item 后退时倾斜方向错误：需要判断角色移动方向（forward/backward）与朝向的关系，可能需对 delta yaw 根据角色速度或移动向量作符号调整（在下一步/视频中会讲解）。
+\item 不同状态下使用不同系数：例如站立/行走/奔跑/瞄准可以使用不同的缩放因子或 gate 值（结合前面讲的 Blend Space 的 gate 参数）。
+\item 若多人服或网络同步：应在服务器/客户端同步或仅基于本地控制器输入计算以避免抖动与预测偏差。
+\end{itemize}
+
+\subsection{小结}
+通过以下流程可以获得稳定且可调的 lean angle：
+\begin{enumerate}
+\item 在 ABP Base 获取并保存当前与上一帧的 yaw；
+\item 计算帧间 yaw 差并用 delta time 归一化为角速度；
+\item 经过缩放与 clamp 得到最终 lean angle；
+\item 将 lean angle 暴露给 ABP Layers 的动画输入，配合 Blend Space 或动画图层驱动视觉倾斜；
+\item 注意处理后退方向与快速旋转情形的特殊判定与平滑。
+\end{enumerate}
+
+\setchapterimage{}
+\chapter{停止动画}
 \end{document}
